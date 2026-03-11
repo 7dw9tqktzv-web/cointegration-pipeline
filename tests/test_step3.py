@@ -249,7 +249,7 @@ class TestStability:
         """CV(β) = std(β) / |mean(β)|."""
         stab = result_gcsi["stability"]
         betas = stab["betas"]
-        expected_cv = np.std(betas, ddof=0) / abs(np.mean(betas))
+        expected_cv = np.std(betas, ddof=1) / abs(np.mean(betas))
         assert abs(stab["cv_beta"] - expected_cv) < 1e-10
 
     def test_var_ratio_formula(self, result_gcsi):

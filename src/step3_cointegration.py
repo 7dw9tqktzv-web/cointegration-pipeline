@@ -259,7 +259,7 @@ def compute_stability(pair: pd.DataFrame, direction: str,
         spread_vars.append(float(spread_block.var()))
 
     # CV(β) = std / |mean|
-    cv_beta = float(np.std(betas, ddof=0) / abs(np.mean(betas)))
+    cv_beta = float(np.std(betas, ddof=1) / abs(np.mean(betas)))
 
     # Ratio_var = max / min
     var_ratio = max(spread_vars) / min(spread_vars) if min(spread_vars) > 0 else np.inf
