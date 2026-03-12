@@ -109,8 +109,8 @@ COSTS_RT: dict[str, CostSpec] = {
 PRICE_TYPE: dict[str, str] = {
     "ES":  "close",    "NQ":  "close",    "CL":  "close",
     "NG":  "close",    "QG":  "close",    "GC":  "close",    "HO":  "close",
-    "RTY": "close",    "RB":  "close",    "ZC":  "close",
-    "ZW":  "close",
+    "RTY": "close",    "RB":  "close",    "BZ":  "close",
+    "ZC":  "close",    "ZW":  "close",    "ZS":  "close",
     "SI":  "typical",  "YM":  "close",    "HG":  "typical",
     "PL":  "typical",  "PA":  "typical",
 }
@@ -124,9 +124,10 @@ PRICE_TYPE: dict[str, str] = {
 LOW_LIQ_PCT: dict[str, float] = {
     # HIGH liquidity : 30% de la médiane
     "ES": 0.30, "NQ": 0.30, "CL": 0.30, "NG": 0.30, "GC": 0.30,
-    "HO": 0.30, "RTY": 0.30, "RB": 0.30, "ZC": 0.30, "ZW": 0.30,
+    "HO": 0.30, "RTY": 0.30, "RB": 0.30, "BZ": 0.30, "ZC": 0.30,
+    "ZW": 0.30, "ZS": 0.30,
     # MID liquidity : 30% de la médiane
-    "SI": 0.30, "YM": 0.30, "HG": 0.30, "PL": 0.30,
+    "SI": 0.30, "YM": 0.30, "HG": 0.30, "PL": 0.30, "QG": 0.30,
     # LOW liquidity : 50% de la médiane
     "PA": 0.50,
 }
