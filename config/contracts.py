@@ -28,6 +28,8 @@ CONTRACTS: dict[str, ContractSpec] = {
     "YM":  {"tick_size": 1.00,   "tick_value": 5.00,   "multiplier": 5},
     "MNQ": {"tick_size": 0.25,   "tick_value": 0.50,   "multiplier": 2},
     "MYM": {"tick_size": 1.00,   "tick_value": 0.50,   "multiplier": 0.5},
+    "MES": {"tick_size": 0.25,   "tick_value": 1.25,   "multiplier": 5},
+    "M2K": {"tick_size": 0.10,   "tick_value": 0.50,   "multiplier": 5},
     # --- Energy ---
     "CL":  {"tick_size": 0.01,   "tick_value": 10.00,  "multiplier": 1000},
     "NG":  {"tick_size": 0.001,  "tick_value": 10.00,  "multiplier": 10_000},
@@ -35,6 +37,7 @@ CONTRACTS: dict[str, ContractSpec] = {
     "HO":  {"tick_size": 0.0001, "tick_value": 4.20,   "multiplier": 42_000},
     "RB":  {"tick_size": 0.0001, "tick_value": 4.20,   "multiplier": 42_000},
     "MCL": {"tick_size": 0.01,   "tick_value": 1.00,   "multiplier": 100},
+    "QG":  {"tick_size": 0.005,  "tick_value": 12.50,  "multiplier": 2500},
     # --- Metals ---
     "GC":  {"tick_size": 0.10,   "tick_value": 10.00,  "multiplier": 100},
     "SI":  {"tick_size": 0.005,  "tick_value": 25.00,  "multiplier": 5000},
@@ -48,9 +51,9 @@ CONTRACTS: dict[str, ContractSpec] = {
     "ZC":  {"tick_size": 0.25,   "tick_value": 12.50,  "multiplier": 50},
     "ZW":  {"tick_size": 0.25,   "tick_value": 12.50,  "multiplier": 50},
     "ZS":  {"tick_size": 0.25,   "tick_value": 12.50,  "multiplier": 50},
-    "MZC": {"tick_size": 0.125,  "tick_value": 1.25,   "multiplier": 10},
-    "MZW": {"tick_size": 0.125,  "tick_value": 1.25,   "multiplier": 10},
-    "MZS": {"tick_size": 0.125,  "tick_value": 1.25,   "multiplier": 10},
+    "MZC": {"tick_size": 0.50,   "tick_value": 2.50,   "multiplier": 5},
+    "MZW": {"tick_size": 0.50,   "tick_value": 2.50,   "multiplier": 5},
+    "MZS": {"tick_size": 0.50,   "tick_value": 2.50,   "multiplier": 5},
 }
 
 
@@ -71,6 +74,8 @@ COSTS_RT: dict[str, CostSpec] = {
     "YM":  {"comm_rt": 3.80,  "slip_rt": 10.00},
     "MNQ": {"comm_rt": 1.24,  "slip_rt": 1.00},
     "MYM": {"comm_rt": 1.24,  "slip_rt": 1.00},
+    "MES": {"comm_rt": 1.24,  "slip_rt": 2.50},
+    "M2K": {"comm_rt": 1.24,  "slip_rt": 1.00},
     "CL":  {"comm_rt": 4.00,  "slip_rt": 20.00},
     "NG":  {"comm_rt": 4.20,  "slip_rt": 20.00},
     "BZ":  {"comm_rt": 2.60,  "slip_rt": 20.00},
@@ -103,7 +108,7 @@ COSTS_RT: dict[str, CostSpec] = {
 
 PRICE_TYPE: dict[str, str] = {
     "ES":  "close",    "NQ":  "close",    "CL":  "close",
-    "NG":  "close",    "GC":  "close",    "HO":  "close",
+    "NG":  "close",    "QG":  "close",    "GC":  "close",    "HO":  "close",
     "RTY": "close",    "RB":  "close",    "ZC":  "close",
     "ZW":  "close",
     "SI":  "typical",  "YM":  "close",    "HG":  "typical",
