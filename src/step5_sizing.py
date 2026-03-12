@@ -13,27 +13,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config.contracts import CONTRACTS
+from config.contracts import CONTRACTS, MICRO_MAP, find_micro
 
-
-# ---------------------------------------------------------------------------
-# Mapping Standard → Micro
-# ---------------------------------------------------------------------------
-
-MICRO_MAP: dict[str, str | None] = {
-    "GC": "MGC",  "SI": "SIL",  "HG": "MHG",
-    "NQ": "MNQ",  "YM": "MYM",  "ES": "MES",
-    "RTY": "M2K",
-    "CL": "MCL",  "NG": "QG",
-    "ZC": "MZC",  "ZW": "MZW",  "ZS": "MZS",
-    "HO": None,   "RB": None,
-    "PA": None,   "PL": None,   "BZ": None,
-}
-
-
-def _find_micro(symbol: str) -> str | None:
-    """Retourne le symbole micro correspondant, ou None."""
-    return MICRO_MAP.get(symbol)
+# Rétro-compatibilité : re-export sous l'ancien nom privé
+_find_micro = find_micro
 
 
 def compute_sizing(bar_state: dict, step4_result: dict) -> dict:
@@ -86,7 +69,7 @@ def compute_sizing(bar_state: dict, step4_result: dict) -> dict:
 
     # Étape 3 — Découpage Standard + Micro
     multiplier_b_std = CONTRACTS[indep_sym]["multiplier"]
-    micro_sym = _find_micro(indep_sym)
+    micro_sym = find_micro(indep_sym)
 
     if micro_sym is not None:
         multiplier_b_micro = CONTRACTS[micro_sym]["multiplier"]

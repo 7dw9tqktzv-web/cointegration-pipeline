@@ -148,6 +148,26 @@ Q_KALMAN: dict[str, tuple[float, float]] = {
 
 
 # ---------------------------------------------------------------------------
+# Mapping Standard → Micro
+# ---------------------------------------------------------------------------
+
+MICRO_MAP: dict[str, str | None] = {
+    "GC": "MGC",  "SI": "SIL",  "HG": "MHG",
+    "NQ": "MNQ",  "YM": "MYM",  "ES": "MES",
+    "RTY": "M2K",
+    "CL": "MCL",  "NG": "QG",
+    "ZC": "MZC",  "ZW": "MZW",  "ZS": "MZS",
+    "HO": None,   "RB": None,
+    "PA": None,   "PL": None,   "BZ": None,
+}
+
+
+def find_micro(symbol: str) -> str | None:
+    """Retourne le symbole micro correspondant, ou None."""
+    return MICRO_MAP.get(symbol)
+
+
+# ---------------------------------------------------------------------------
 # Configuration des 6 paires
 # ---------------------------------------------------------------------------
 
