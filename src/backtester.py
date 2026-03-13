@@ -12,7 +12,9 @@ Architecture :
         5. Agrégation quotidienne + métriques V1
 """
 
+import io
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
@@ -384,7 +386,8 @@ def compute_metrics(trades: list[dict], daily_pnl: pd.DataFrame) -> dict:
 def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  symbol_a: str, symbol_b: str,
                  pair_name: str,
-                 verbose: bool = True) -> dict:
+                 verbose: bool = True,
+                 s2_refresh_interval: int = 10) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -392,11 +395,15 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
         symbol_a/b:  symboles des actifs
         pair_name:   clé dans PAIRS (ex: "GC_SI")
         verbose:     True = log par session, False = silencieux (tests)
+        s2_refresh_interval: recalibrer step2 tous les N sessions (défaut 10).
+                             I(1) est structurel pour CME — tester à chaque
+                             session est du gaspillage (36 ADF+KPSS par appel).
 
     Output:
         dict avec pair, trades, daily_pnl, metrics, session_diagnostics, etc.
     """
     pair_config = PAIRS[pair_name]
+    _devnull = io.StringIO()  # sink pour les prints des steps 2/3/4
 
     # Sessions communes
     sessions_a = set(df_a["session_id"].unique())
@@ -411,12 +418,16 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     skip_reasons: dict[str, int] = {}
     n_traded = 0
 
+    # Cache step2 — I(1) est structurel, pas besoin de recalculer chaque session
+    s2_cache: dict = {}
+    s2_last_refresh = -s2_refresh_interval  # force le premier calcul
+
     def log_skip(session_id: str, reason: str) -> None:
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
         if verbose:
             print(f"  SKIP {session_id}: {reason}")
 
-    for target_session in tradeable_sessions:
+    for i, target_session in enumerate(tradeable_sessions):
         # 1. Fenêtre calibration
         calib = select_calibration_window(
             df_a, df_b, target_session, pair_config, n_sessions=30
@@ -426,23 +437,34 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             continue
         df_a_calib, df_b_calib = calib
 
-        # 2. Step 2 — Stationnarité
-        # NOTE: avec 30 sessions, 60d = None → is_blocking ne se déclenche
-        # effectivement jamais. Acceptable car I(1) est structurel pour CME.
-        s2_a = run_step2(df_a_calib, symbol_a)
-        s2_b = run_step2(df_b_calib, symbol_b)
+        # 2. Step 2 — Stationnarité (caché, refresh tous les N sessions)
+        # I(1) est structurel pour CME — la fenêtre glisse d'1 session sur 30,
+        # le verdict ne change pas. Recalculer 36 ADF+KPSS à chaque pas
+        # est du gaspillage de calcul, pas de la rigueur.
+        if i - s2_last_refresh >= s2_refresh_interval:
+            with redirect_stdout(_devnull):
+                s2_a = run_step2(df_a_calib, symbol_a)
+                s2_b = run_step2(df_b_calib, symbol_b)
+            s2_cache = {"s2_a": s2_a, "s2_b": s2_b}
+            s2_last_refresh = i
+        else:
+            s2_a = s2_cache["s2_a"]
+            s2_b = s2_cache["s2_b"]
+
         if s2_a["is_blocking"] or s2_b["is_blocking"]:
             log_skip(target_session, "stationarity_blocking")
             continue
 
-        # 3. Step 3 — Cointégration
-        s3 = run_step3(df_a_calib, df_b_calib, symbol_a, symbol_b)
+        # 3. Step 3 — Cointégration (recalibré à chaque session — β change)
+        with redirect_stdout(_devnull):
+            s3 = run_step3(df_a_calib, df_b_calib, symbol_a, symbol_b)
         if s3["is_blocking"]:
             log_skip(target_session, "cointegration_blocking")
             continue
 
-        # 4. Step 4 — Paramètres OU
-        s4 = run_step4(s3, df_a_calib, df_b_calib)
+        # 4. Step 4 — Paramètres OU (recalibré à chaque session)
+        with redirect_stdout(_devnull):
+            s4 = run_step4(s3, df_a_calib, df_b_calib)
         if s4["is_blocking"]:
             log_skip(target_session, "ou_blocking")
             continue
