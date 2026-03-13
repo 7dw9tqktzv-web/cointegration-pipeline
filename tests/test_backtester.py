@@ -471,8 +471,12 @@ class TestRealPipeline:
     def real_data(self):
         """Charge YM + RTY via step1."""
         from src.step1_data import run_step1
-        df_ym = run_step1("YM")
-        df_rty = run_step1("RTY")
+        ym_files = list(_DATA_RAW.glob("YM*"))
+        rty_files = list(_DATA_RAW.glob("RTY*"))
+        if not ym_files or not rty_files:
+            pytest.skip("YM/RTY raw files not found")
+        df_ym = run_step1(ym_files[0], "YM")
+        df_rty = run_step1(rty_files[0], "RTY")
         return df_ym, df_rty
 
     @pytest.fixture(scope="class")
