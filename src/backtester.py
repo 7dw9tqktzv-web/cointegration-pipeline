@@ -411,7 +411,7 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     all_sessions = sorted(sessions_a & sessions_b)
 
     # On commence à la 31ème session (30 pour calibration + 1 pour trading)
-    tradeable_sessions = all_sessions[30:]
+    tradeable_sessions = all_sessions[60:]
 
     all_trades: list[dict] = []
     session_diagnostics: list[dict] = []
@@ -430,7 +430,7 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     for i, target_session in enumerate(tradeable_sessions):
         # 1. Fenêtre calibration
         calib = select_calibration_window(
-            df_a, df_b, target_session, pair_config, n_sessions=30
+            df_a, df_b, target_session, pair_config, n_sessions=60
         )
         if calib is None:
             log_skip(target_session, "insufficient_clean_sessions")

@@ -151,7 +151,7 @@ def run_ar1_df_test(spread: pd.Series) -> dict:
 
 
 def is_stationary_mackinnon(t_df: float, window_name: str,
-                            level: str = "5%") -> bool:
+                            level: str = "10%") -> bool:
     """Compare t_DF aux seuils MacKinnon pour résidus bivariés.
 
     Rejette H0 (unit root) si t_DF < valeur critique.
@@ -337,7 +337,7 @@ def run_step3(df_a: pd.DataFrame, df_b: pd.DataFrame,
         best = result["best_direction"]
         best_data = result[best]
         t_df = best_data["ar1"]["t_df"]
-        cv = MACKINNON_CV[wname]["5%"]
+        cv = MACKINNON_CV[wname]["10%"]
         stat = best_data["is_stationary"]
 
         if stat:
@@ -397,7 +397,7 @@ def run_step3(df_a: pd.DataFrame, df_b: pd.DataFrame,
     print(f"  beta_OLS={ols['beta']:.6f}, alpha_OLS={ols['alpha']:.6f}")
     print(f"  phi={ar1['phi']:.6f}, sigma_eta={ar1['sigma_eta']:.6f}")
     print(f"  t_DF(30d)={ar1['t_df']:.3f}, "
-          f"CV MacKinnon={MACKINNON_CV['30d']['5%']:.2f}")
+          f"CV MacKinnon={MACKINNON_CV['30d']['10%']:.2f}")
     print(f"  Stationnaire 30d: {best_30d['is_stationary']}")
     if stability:
         print(f"  CV(beta)={stability['cv_beta']:.4f} "
@@ -427,7 +427,7 @@ def run_step3(df_a: pd.DataFrame, df_b: pd.DataFrame,
         "resid_var": ols["resid_var"],
         # Test MacKinnon 30j
         "t_df_30d": ar1["t_df"],
-        "mackinnon_cv_30d": MACKINNON_CV["30d"]["5%"],
+        "mackinnon_cv_30d": MACKINNON_CV["30d"]["10%"],
         "is_stationary_30d": best_30d["is_stationary"],
         # Stabilité 30j
         "stability": stability,

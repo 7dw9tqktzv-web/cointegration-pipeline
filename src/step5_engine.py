@@ -178,9 +178,9 @@ def compute_signal(row, session_state: dict, step4_result: dict,
     # 6. ARMEMENT (indépendant, toujours évalué si pas de position + pas time-lock)
     #    Pas d'armement en zone SL (z < -3.0 pour long, z > 3.0 pour short)
     if position is None and current_time_min < session_state["t_limite"]:
-        if z < -2.5 and z >= -3.0:
+        if z < -2.0 and z >= -3.0:
             session_state["is_armed_long"] = True
-        if z > 2.5 and z <= 3.0:
+        if z > 2.0 and z <= 3.0:
             session_state["is_armed_short"] = True
 
     return (signal, float(spread), float(z))
