@@ -192,6 +192,10 @@ PAIRS: dict[str, PairConfig] = {
         "leg_a": "NQ", "leg_b": "RTY", "classe": "Equity Index",
         "rollover_excl": 0, "t_close_pit": None,
     },
+    "YM_RTY": {
+        "leg_a": "YM", "leg_b": "RTY", "classe": "Equity Index",
+        "rollover_excl": 0, "t_close_pit": None,
+    },
     "CL_HO": {
         "leg_a": "CL", "leg_b": "HO", "classe": "Energy",
         "rollover_excl": 1, "t_close_pit": None,
