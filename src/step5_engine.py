@@ -24,7 +24,7 @@ from src.step5_sizing import compute_sizing
 
 
 # ---------------------------------------------------------------------------
-# σ_rolling — Normalisation Adaptative Intraday (V2.1)
+# σ_rolling — Normalisation Adaptative Intraday (V2.1, conserve pour compat)
 # ---------------------------------------------------------------------------
 
 def compute_sigma_rolling(spread_history: list[float], window: int,
@@ -58,8 +58,70 @@ def compute_sigma_rolling(spread_history: list[float], window: int,
 
 
 # ---------------------------------------------------------------------------
+# Z-score intraday V2.2 — mu_rolling + sigma_rolling meme fenetre
+# ---------------------------------------------------------------------------
+
+def compute_z_intraday(spread_history: list[float],
+                       window: int) -> tuple[float, float, float]:
+    """Calcule le Z-score intraday auto-coherent.
+
+    Z = (spread_t - mu_rolling) / sigma_rolling
+    mu et sigma sont estimes sur la meme fenetre N.
+    Z est mecaniquement borne — pas de dependance a theta_OU ni sigma_eq.
+    Pendant le burn-in (historique < window), Z = 0 (pas de signal).
+
+    Input:
+        spread_history: liste des spreads de la session (barres 0 a t)
+        window:         fenetre rolling en barres
+
+    Output:
+        (z, mu_rolling, sigma_rolling)
+    """
+    if len(spread_history) < window:
+        # Burn-in : pas de signal
+        return (0.0, 0.0, 0.0)
+
+    recent = spread_history[-window:]
+    mu = float(np.mean(recent))
+    sigma = float(np.std(recent, ddof=1))
+    sigma = max(sigma, 1e-10)
+
+    spread_t = spread_history[-1]
+    z = (spread_t - mu) / sigma
+
+    return (z, mu, sigma)
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 — Initialisation de Session
 # ---------------------------------------------------------------------------
+
+def _compute_bias(first_row: dict, step4_result: dict) -> str:
+    """Biais directionnel V2.2 — couche 1 vers couche 2.
+
+    Z_LT = (spread_ouverture - theta_OU) / sigma_eq
+    Si Z_LT > 0 : spread au-dessus de l'equilibre long terme -> SHORT seulement
+    Si Z_LT < 0 : spread en dessous -> LONG seulement
+
+    Input:
+        first_row:    premiere barre de la session (price_a, price_b)
+        step4_result: parametres OU (theta_ou, sigma_eq, alpha_ols, beta_ols)
+
+    Output:
+        "LONG" ou "SHORT"
+    """
+    alpha = step4_result["alpha_ols"]
+    beta = step4_result["beta_ols"]
+    theta = step4_result["theta_ou"]
+    sigma_eq = step4_result["sigma_eq"]
+
+    log_a = np.log(first_row["price_a"])
+    log_b = np.log(first_row["price_b"])
+    spread_open = log_a - alpha - beta * log_b
+    z_lt = (spread_open - theta) / sigma_eq
+
+    return "SHORT" if z_lt > 0 else "LONG"
+
 
 def _compute_t_limite(hl_operational: float, pair_config: dict) -> int:
     """T_limite en minutes depuis minuit CT.
@@ -89,7 +151,11 @@ def _compute_t_limite(hl_operational: float, pair_config: dict) -> int:
 
 def init_session(step4_result: dict, pair_config: dict,
                  sigma_rolling_window: int = 20,
-                 sl_threshold: float = 3.0) -> dict:
+                 sl_threshold: float = 3.0,
+                 direct_entry: bool = False,
+                 tp_level: float = 0.5,
+                 use_v2_zscore: bool = False,
+                 first_row: dict | None = None) -> dict:
     """Phase 1 — Initialise tous les états de session.
 
     Appelée UNE fois par session (à 17h30 CT).
@@ -99,6 +165,10 @@ def init_session(step4_result: dict, pair_config: dict,
         pair_config:          PairConfig depuis config/contracts.py
         sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
         sl_threshold:         seuil SL en unités de σ (défaut 3.0)
+        direct_entry:         True = entree au 1er franchissement, pas de arm-then-trigger
+        tp_level:             seuil TP (defaut 0.5 = |z| < 0.5 en mode classique)
+        use_v2_zscore:        True = Z intraday V2.2 (mu_rolling + sigma_rolling)
+        first_row:            premiere barre de la session (pour biais directionnel V2.2)
 
     Output:
         session_state dict mutable (modifié barre par barre)
@@ -149,6 +219,16 @@ def init_session(step4_result: dict, pair_config: dict,
 
         # Seuils paramétrables
         "sl_threshold": sl_threshold,
+        "direct_entry": direct_entry,
+        "tp_level": tp_level,
+
+        # V2.2 — Z intraday
+        "use_v2_zscore": use_v2_zscore,
+        "bias": _compute_bias(first_row, step4_result) if use_v2_zscore and first_row else None,
+
+        # V2.2 — sorties spread-space (figes a l'entree)
+        "spread_entry": None,
+        "sigma_entry": None,
     }
 
 
@@ -158,10 +238,13 @@ def init_session(step4_result: dict, pair_config: dict,
 
 def compute_signal(row, session_state: dict, step4_result: dict,
                    current_time_min: int) -> tuple[str | None, float, float, float]:
-    """Calcule le spread, σ_rolling, Z-score et détermine le signal.
+    """Calcule le spread, Z-score et détermine le signal.
 
-    V2.1 : le Z-score utilise σ_rolling (dynamique intraday) au lieu de σ_eq.
-    σ_eq reste disponible dans step4_result pour diagnostic.
+    Deux modes :
+    - V2.1 (use_v2_zscore=False) : Z = (spread - theta_OU) / sigma_rolling
+    - V2.2 (use_v2_zscore=True)  : Z = (spread - mu_rolling) / sigma_rolling
+      avec mu et sigma sur la meme fenetre, entree directe, biais directionnel.
+
     Le Signal Engine n'accède JAMAIS à β_Kalman.
 
     Input:
@@ -180,65 +263,115 @@ def compute_signal(row, session_state: dict, step4_result: dict,
 
     log_a = np.log(row["price_a"])
     log_b = np.log(row["price_b"])
-    # Spread brut OLS — soustraire θ_OU ne changerait pas le std
+    # Spread brut OLS — soustraire theta_OU ne changerait pas le std
     spread = log_a - alpha_ols - beta_ols * log_b
 
-    # V2.1 : accumuler le spread et calculer σ_rolling
+    # Accumuler le spread
     session_state["spread_history"].append(spread)
-    sigma_rolling = compute_sigma_rolling(
-        session_state["spread_history"],
-        session_state["sigma_rolling_window"],
-        sigma_eq,
-    )
 
-    z = (spread - theta_ou) / sigma_rolling
+    # Calcul du Z-score selon le mode
+    if session_state["use_v2_zscore"]:
+        # V2.2 : Z intraday auto-coherent (mu + sigma meme fenetre)
+        z, mu_rolling, sigma_rolling = compute_z_intraday(
+            session_state["spread_history"],
+            session_state["sigma_rolling_window"],
+        )
+    else:
+        # V2.1 : Z = (spread - theta_OU) / sigma_rolling
+        sigma_rolling = compute_sigma_rolling(
+            session_state["spread_history"],
+            session_state["sigma_rolling_window"],
+            sigma_eq,
+        )
+        z = (spread - theta_ou) / sigma_rolling
 
-    # Time-Lock : désarmer, pas de nouvelle entrée
+    # --- Machine a etats --- PRIORITE DES SIGNAUX ---
+    signal = None
+    position = session_state["position"]
+    sl = session_state["sl_threshold"]
+    tp_lv = session_state["tp_level"]
+    bias = session_state.get("bias")
+    is_v2 = session_state["use_v2_zscore"]
+
+    # Time-Lock
     if current_time_min >= session_state["t_limite"]:
         session_state["is_armed_long"] = False
         session_state["is_armed_short"] = False
 
-    # --- Machine à états — PRIORITÉ DES SIGNAUX ---
-    signal = None
-    position = session_state["position"]
-    sl = session_state["sl_threshold"]
-
-    # 1. SESSION_CLOSE — 5ème motif (audit #1)
+    # 1. SESSION_CLOSE
     if current_time_min >= 15 * 60 + 25 and position is not None:
         return ("SESSION_CLOSE", float(spread), float(z), float(sigma_rolling))
 
-    # 2. STOP LOSS
-    if position == "LONG" and z < -sl:
-        signal = "SL"
-    elif position == "SHORT" and z > sl:
-        signal = "SL"
+    # 2-3. STOP LOSS + TAKE PROFIT
+    if position is not None:
+        spread_e = session_state.get("spread_entry")
+        sigma_e = session_state.get("sigma_entry")
 
-    # 3. TAKE PROFIT
-    elif position is not None and abs(z) < 0.5:
-        signal = "TP"
+        if is_v2 and spread_e is not None and sigma_e is not None and sigma_e > 0:
+            # V2.2 : sorties en spread-space avec references figees a l'entree
+            # SL a 1.5 * sigma_entry, TP a tp_level * sigma_entry
+            if position == "LONG":
+                if spread < spread_e - 1.5 * sigma_e:
+                    signal = "SL"
+                elif spread > spread_e + tp_lv * sigma_e:
+                    signal = "TP"
+            else:  # SHORT
+                if spread > spread_e + 1.5 * sigma_e:
+                    signal = "SL"
+                elif spread < spread_e - tp_lv * sigma_e:
+                    signal = "TP"
+        else:
+            # V2.1 : sorties en Z-score
+            if position == "LONG" and z < -sl:
+                signal = "SL"
+            elif position == "SHORT" and z > sl:
+                signal = "SL"
+            elif session_state["direct_entry"]:
+                if position == "LONG" and z >= tp_lv:
+                    signal = "TP"
+                elif position == "SHORT" and z <= -tp_lv:
+                    signal = "TP"
+            else:
+                if abs(z) < tp_lv:
+                    signal = "TP"
 
-    # 4. DÉSARMEMENT sans position en zone SL
-    elif position is None and session_state["is_armed_long"] and z < -sl:
-        session_state["is_armed_long"] = False
-    elif position is None and session_state["is_armed_short"] and z > sl:
-        session_state["is_armed_short"] = False
+    # 4. ENTREES
+    if signal is None and position is None:
+        if is_v2:
+            # V2.2 : entree directe + filtre biais directionnel
+            if current_time_min < session_state["t_limite"]:
+                if z <= -2.0 and z >= -sl and bias == "LONG":
+                    signal = "ENTRY_LONG"
+                elif z >= 2.0 and z <= sl and bias == "SHORT":
+                    signal = "ENTRY_SHORT"
 
-    # 5. DÉCLENCHEMENT (seulement si pas en time-lock et pas de position)
-    elif position is None and current_time_min < session_state["t_limite"]:
-        if session_state["is_armed_long"] and z > -2.0:
-            signal = "ENTRY_LONG"
-            session_state["is_armed_long"] = False
-        elif session_state["is_armed_short"] and z < 2.0:
-            signal = "ENTRY_SHORT"
-            session_state["is_armed_short"] = False
+        elif session_state["direct_entry"]:
+            # V2.1 entree directe (sans biais)
+            if current_time_min < session_state["t_limite"]:
+                if z <= -2.0 and z >= -sl:
+                    signal = "ENTRY_LONG"
+                elif z >= 2.0 and z <= sl:
+                    signal = "ENTRY_SHORT"
 
-    # 6. ARMEMENT (indépendant, toujours évalué si pas de position + pas time-lock)
-    #    Pas d'armement en zone SL
-    if position is None and current_time_min < session_state["t_limite"]:
-        if z < -2.0 and z >= -sl:
-            session_state["is_armed_long"] = True
-        if z > 2.0 and z <= sl:
-            session_state["is_armed_short"] = True
+        else:
+            # V2.1 arm-then-trigger classique
+            if session_state["is_armed_long"] and z < -sl:
+                session_state["is_armed_long"] = False
+            elif session_state["is_armed_short"] and z > sl:
+                session_state["is_armed_short"] = False
+            elif current_time_min < session_state["t_limite"]:
+                if session_state["is_armed_long"] and z > -2.0:
+                    signal = "ENTRY_LONG"
+                    session_state["is_armed_long"] = False
+                elif session_state["is_armed_short"] and z < 2.0:
+                    signal = "ENTRY_SHORT"
+                    session_state["is_armed_short"] = False
+
+            if position is None and current_time_min < session_state["t_limite"]:
+                if z < -2.0 and z >= -sl:
+                    session_state["is_armed_long"] = True
+                if z > 2.0 and z <= sl:
+                    session_state["is_armed_short"] = True
 
     return (signal, float(spread), float(z), float(sigma_rolling))
 
@@ -336,6 +469,10 @@ def _open_position(bar_state: dict, signal: str, sizing: dict,
     """Ouvre une nouvelle position et logue le trade."""
     direction = "LONG" if signal == "ENTRY_LONG" else "SHORT"
 
+    # V2.2 : figer spread_entry et sigma_entry pour sorties spread-space
+    session_state["spread_entry"] = bar_state.get("spread", 0.0)
+    session_state["sigma_entry"] = bar_state.get("sigma_rolling", 0.0)
+
     trade = {
         # Entrée
         "entry_timestamp": bar_state["timestamp"],
@@ -429,7 +566,10 @@ def _compute_session_diagnostics(bar_states: list,
 def run_session(df_session: pd.DataFrame, step4_result: dict,
                 pair_config: dict,
                 sigma_rolling_window: int = 20,
-                sl_threshold: float = 3.0) -> dict:
+                sl_threshold: float = 3.0,
+                direct_entry: bool = False,
+                tp_level: float = 0.5,
+                use_v2_zscore: bool = False) -> dict:
     """Exécute les phases 1-5 sur une session complète.
 
     Input:
@@ -439,12 +579,24 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
         pair_config:          PairConfig depuis config/contracts.py
         sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
         sl_threshold:         seuil SL en unités de σ (défaut 3.0)
+        direct_entry:         True = entree directe au 1er franchissement
+        tp_level:             seuil TP (defaut 0.5)
+        use_v2_zscore:        True = Z intraday V2.2
 
     Output:
         dict avec bar_states (liste), trades (liste), diagnostics
     """
+    # Premiere barre pour le biais directionnel V2.2
+    first_row = None
+    if use_v2_zscore and len(df_session) > 0:
+        row0 = df_session.iloc[0]
+        first_row = {"price_a": float(row0["price_a"]),
+                     "price_b": float(row0["price_b"])}
+
     session_state = init_session(step4_result, pair_config,
-                                 sigma_rolling_window, sl_threshold)
+                                 sigma_rolling_window, sl_threshold,
+                                 direct_entry, tp_level,
+                                 use_v2_zscore, first_row)
     bar_states = []
 
     for idx, row in df_session.iterrows():

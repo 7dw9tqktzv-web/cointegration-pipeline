@@ -389,7 +389,10 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  verbose: bool = True,
                  s2_refresh_interval: int = 10,
                  sigma_rolling_window: int = 20,
-                 sl_threshold: float = 3.0) -> dict:
+                 sl_threshold: float = 3.0,
+                 direct_entry: bool = False,
+                 tp_level: float = 0.5,
+                 use_v2_zscore: bool = False) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -402,6 +405,9 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                              session est du gaspillage (36 ADF+KPSS par appel).
         sigma_rolling_window: fenêtre σ_rolling en barres (V2.1, défaut 20)
         sl_threshold: seuil SL en unites de sigma (defaut 3.0)
+        direct_entry: True = entree directe au 1er franchissement
+        tp_level:     seuil TP (defaut 0.5)
+        use_v2_zscore: True = Z intraday V2.2
 
     Output:
         dict avec pair, trades, daily_pnl, metrics, session_diagnostics, etc.
@@ -481,7 +487,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
 
         # 6. Step 5 — Exécution
         result = run_session(df_session, s4, pair_config,
-                             sigma_rolling_window, sl_threshold)
+                             sigma_rolling_window, sl_threshold,
+                             direct_entry, tp_level, use_v2_zscore)
         n_traded += 1
 
         # 7. PnL pour chaque trade
