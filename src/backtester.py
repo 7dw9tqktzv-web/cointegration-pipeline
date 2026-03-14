@@ -488,7 +488,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
         # 6. Step 5 — Exécution
         result = run_session(df_session, s4, pair_config,
                              sigma_rolling_window, sl_threshold,
-                             direct_entry, tp_level, use_v2_zscore)
+                             direct_entry, tp_level, use_v2_zscore,
+                             pair_name)
         n_traded += 1
 
         # 7. PnL pour chaque trade

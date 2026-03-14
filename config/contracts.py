@@ -179,6 +179,17 @@ class PairConfig(TypedDict):
     t_close_pit: str | None  # contrainte pit close (CT), None = 15:30
 
 
+# HL_intraday P75 en barres — mesure sur 30 sessions cointegrees
+# Methode : excursion |spread_centre| > 1.0 sigma -> retour < 0.25 sigma
+HL_INTRADAY_P75: dict[str, int] = {
+    "ZC_ZW": 42,
+    "GC_SI": 41,
+    "NQ_RTY": 47,
+    "YM_RTY": 48,
+    "CL_NG": 62,
+}
+
+
 PAIRS: dict[str, PairConfig] = {
     "GC_SI": {
         "leg_a": "GC", "leg_b": "SI", "classe": "Metals",

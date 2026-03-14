@@ -18,7 +18,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from config.contracts import Q_KALMAN, PAIRS
+from config.contracts import Q_KALMAN, PAIRS, HL_INTRADAY_P75
 from src.step5_risk import evaluate_filters
 from src.step5_sizing import compute_sizing
 
@@ -155,7 +155,8 @@ def init_session(step4_result: dict, pair_config: dict,
                  direct_entry: bool = False,
                  tp_level: float = 0.5,
                  use_v2_zscore: bool = False,
-                 first_row: dict | None = None) -> dict:
+                 first_row: dict | None = None,
+                 pair_name: str | None = None) -> dict:
     """Phase 1 — Initialise tous les états de session.
 
     Appelée UNE fois par session (à 17h30 CT).
@@ -183,6 +184,9 @@ def init_session(step4_result: dict, pair_config: dict,
     classe = pair_config["classe"]
     q_alpha, q_beta = Q_KALMAN[classe]
 
+    # HL_intraday P75 pour T_limite V2.2
+    hl_intraday_p75 = HL_INTRADAY_P75.get(pair_name) if pair_name else None
+
     return {
         # Signal Engine
         "is_armed_long": False,
@@ -207,8 +211,11 @@ def init_session(step4_result: dict, pair_config: dict,
         "Q": np.diag([q_alpha, q_beta]),
         "R": resid_var,
 
-        # Time-lock
-        "t_limite": _compute_t_limite(hl_operational, pair_config),
+        # Time-lock — V2.2 : utiliser HL_intraday P75 au lieu de HL multi-jour
+        "t_limite": _compute_t_limite(
+            hl_intraday_p75 if use_v2_zscore and hl_intraday_p75 else hl_operational,
+            pair_config,
+        ),
 
         # Trades log
         "trades": [],
@@ -569,7 +576,8 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
                 sl_threshold: float = 3.0,
                 direct_entry: bool = False,
                 tp_level: float = 0.5,
-                use_v2_zscore: bool = False) -> dict:
+                use_v2_zscore: bool = False,
+                pair_name: str | None = None) -> dict:
     """Exécute les phases 1-5 sur une session complète.
 
     Input:
@@ -596,10 +604,11 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
     session_state = init_session(step4_result, pair_config,
                                  sigma_rolling_window, sl_threshold,
                                  direct_entry, tp_level,
-                                 use_v2_zscore, first_row)
+                                 use_v2_zscore, first_row, pair_name)
     bar_states = []
+    kalman_burnin = 5  # barres pour stabiliser le Kalman avant filtre C
 
-    for idx, row in df_session.iterrows():
+    for bar_idx, (idx, row) in enumerate(df_session.iterrows()):
         current_time_min = idx.hour * 60 + idx.minute
 
         # Phase 2 + Phase 3 (conceptuellement parallèles)
@@ -607,6 +616,12 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
             row, session_state, step4_result, current_time_min
         )
         kalman = kalman_update(row, session_state)
+
+        # V2.2 : figer beta_ref apres burn-in Kalman (5 barres)
+        # Le Kalman a le droit de corriger l'initialisation stale.
+        # Le filtre C ne surveille que la derive intra-session reelle.
+        if use_v2_zscore and bar_idx == kalman_burnin:
+            session_state["beta_ref"] = kalman["beta_kalman"]
 
         # Barrière → BarState_t IMMUABLE
         bar_state = {
@@ -623,7 +638,17 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
         }
 
         # Phase 4 — Risk Manager
-        verdict = evaluate_filters(bar_state, session_state, step4_result)
+        # Pendant le burn-in Kalman V2.2, pas de filtre C (beta_ref pas encore fige)
+        if use_v2_zscore and bar_idx < kalman_burnin:
+            # Skip filtre C pendant le burn-in — on laisse le Kalman converger
+            session_state["rolling_nis"].append(kalman["nis"])
+            if len(session_state["rolling_nis"]) > 20:
+                session_state["rolling_nis"] = session_state["rolling_nis"][-20:]
+            verdict = {"filtre_a_ok": True, "filtre_b_ok": True,
+                       "filtre_c_ok": True, "is_session_killed": False,
+                       "motif_blocage": None}
+        else:
+            verdict = evaluate_filters(bar_state, session_state, step4_result)
 
         # Phase 5 — Sizing + exécution (conditionnel)
         _execute_signal(bar_state, verdict, session_state, step4_result)

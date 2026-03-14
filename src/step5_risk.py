@@ -82,13 +82,15 @@ def check_filter_b(beta_kalman: float, beta_kalman_prev: float) -> bool:
 #   Energy:       Q_β=5e-7  → seuil=0.04597
 # ---------------------------------------------------------------------------
 
-def check_filter_c(beta_kalman: float, beta_ols: float,
+def check_filter_c(beta_kalman: float, beta_ref: float,
                    classe: str) -> tuple[bool, float]:
-    """|β_Kalman_t − β_OLS| < seuil_C_abs.
+    """|β_Kalman_t − β_ref| < seuil_C_abs.
+
+    beta_ref est soit beta_OLS (V1/V2.1), soit beta_Kalman apres burn-in (V2.2).
 
     Input:
         beta_kalman: β_Kalman courant
-        beta_ols:    β OLS fixe (step4)
+        beta_ref:    β de reference (OLS ou Kalman post-burn-in)
         classe:      classe d'actifs (pour lookup Q_KALMAN)
 
     Output:
@@ -98,7 +100,7 @@ def check_filter_c(beta_kalman: float, beta_ols: float,
     sigma_derive = np.sqrt(264 * q_beta)
     seuil_c_abs = 4.0 * sigma_derive
 
-    drift_abs = abs(beta_kalman - beta_ols)
+    drift_abs = abs(beta_kalman - beta_ref)
     ok = drift_abs < seuil_c_abs
 
     return ok, float(seuil_c_abs)
@@ -138,8 +140,10 @@ def evaluate_filters(bar_state: dict, session_state: dict,
     b_ok = check_filter_b(
         bar_state["beta_kalman"], session_state["beta_kalman_prev"]
     )
+    # Filtre C — reference : beta_ref (post-burn-in en V2.2, beta_OLS sinon)
+    beta_ref = session_state.get("beta_ref", step4_result["beta_ols"])
     c_ok, seuil = check_filter_c(
-        bar_state["beta_kalman"], step4_result["beta_ols"],
+        bar_state["beta_kalman"], beta_ref,
         session_state["classe"],
     )
 
@@ -153,7 +157,7 @@ def evaluate_filters(bar_state: dict, session_state: dict,
     elif not b_ok:
         motif = "filtre_b"
     elif not c_ok:
-        drift = abs(bar_state["beta_kalman"] - step4_result["beta_ols"])
+        drift = abs(bar_state["beta_kalman"] - beta_ref)
         motif = f"filtre_c_drift={drift:.4f}_seuil={seuil:.4f}"
 
     return {
