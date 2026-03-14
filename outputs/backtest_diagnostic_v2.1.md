@@ -92,8 +92,57 @@ Parametres fixes : calibration 60j, MacKinnon 10%, arming 2.0 sigma, TP 0.5 sigm
 
 ---
 
-## 4. Pistes pour la suite
+## 4. Test SL 2.5 vs 3.0 — Diagnostic placement de SL
 
-- **V2.2 Bertram** : seuils optimaux par paire (a_optimal = f(kappa, sigma, couts)) — potentiellement mieux que 2.0 sigma fixe
-- **Investiguer le ratio W/L sur ZC/ZW** : les SL coutent 1.7x plus que les TP en moyenne
-- **cointegration_blocking** : MacKinnon 10% reste trop restrictif pour GC/SI, NQ/RTY, CL/HO — a revisiter ?
+**Question** : le ratio W/L defavorable est-il un probleme de placement de SL ou un probleme structurel ?
+**Methode** : un seul parametre change (SL 3.0 -> 2.5), window=20, sur ZC/ZW et GC/PA.
+
+### ZC/ZW
+
+| SL  | Trades | TP | SL  | SC | Sharpe_1x | WR  | W/L | avgTP ($) | avgSL ($) |
+|-----|--------|----|-----|----|-----------|-----|-----|-----------|-----------|
+| 3.0 | 33     | 17 | 16  | 0  | -2.20     | 52% | 0.6 | -32       | -75       |
+| 2.5 | 27     | 14 | 13  | 0  | -2.04     | 52% | 0.5 | -31       | -82       |
+
+### GC/PA
+
+| SL  | Trades | TP | SL  | SC | Sharpe_1x | WR  | W/L | avgTP ($) | avgSL ($) |
+|-----|--------|----|-----|----|-----------|-----|-----|-----------|-----------|
+| 3.0 | 8      | 4  | 4   | 0  | +0.32     | 50% | 1.1 | +212      | +144      |
+| 2.5 | 6      | 3  | 3   | 0  | +0.27     | 50% | 0.7 | +92       | +287      |
+
+### Diagnostic
+
+**ZC/ZW — probleme structurel, pas de placement de SL :**
+- avgTP = -$32 : les TP eux-memes perdent de l'argent en net. Le cout de transaction
+  (spread_cost_rt) est superieur au profit brut moyen d'un TP.
+- Resserrer le SL a 2.5 reduit le nombre de trades (-6) sans ameliorer le ratio.
+- Le WR reste a 52% dans les deux cas — la qualite d'entree ne change pas.
+- **Conclusion : le probleme n'est pas le SL mais l'amplitude du TP trop faible
+  relativement aux couts de transaction.**
+
+**GC/PA — SL 3.0 est optimal :**
+- avgTP = +$212, avgSL = +$144 : les deux sont positifs (trades profitables net).
+- SL 2.5 degrade la performance (perd 2 trades, W/L 1.1 -> 0.7).
+- Le spread GC/PA a plus d'amplitude que ZC/ZW, permettant des TP rentables.
+
+### Implications pour V2.2
+
+Le probleme de ZC/ZW n'est pas le placement de SL ni le sigma_rolling.
+C'est le ratio amplitude_TP / couts_transaction qui est trop faible.
+Deux leviers possibles :
+1. **V2.2 Bertram** : seuils d'entree optimaux qui maximisent le profit espere
+   PAR UNITE DE TEMPS, en tenant compte des couts. Un seuil d'entree plus
+   eloigne de la moyenne = TP plus profitable, mais trades moins frequents.
+2. **Micro-contrats** : reduire les couts de transaction via sizing micro
+   (ZC n'a pas de micro, mais le diagnostic s'applique aux autres paires).
+
+---
+
+## 5. Pistes pour la suite
+
+- **V2.2 Bertram** : seuils optimaux par paire — a_optimal = f(kappa, sigma, couts).
+  Resout le probleme structurel identifie en section 4 : le TP doit etre
+  calibre pour couvrir les couts, pas fixe a 0.5 sigma pour toutes les paires.
+- **cointegration_blocking** : MacKinnon 10% reste trop restrictif pour
+  GC/SI, NQ/RTY, CL/HO (60-70% des sessions skippees). A revisiter apres V2.2.

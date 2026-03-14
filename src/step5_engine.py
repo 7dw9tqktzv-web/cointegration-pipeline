@@ -88,7 +88,8 @@ def _compute_t_limite(hl_operational: float, pair_config: dict) -> int:
 
 
 def init_session(step4_result: dict, pair_config: dict,
-                 sigma_rolling_window: int = 20) -> dict:
+                 sigma_rolling_window: int = 20,
+                 sl_threshold: float = 3.0) -> dict:
     """Phase 1 — Initialise tous les états de session.
 
     Appelée UNE fois par session (à 17h30 CT).
@@ -97,6 +98,7 @@ def init_session(step4_result: dict, pair_config: dict,
         step4_result:         dict sortie de run_step4
         pair_config:          PairConfig depuis config/contracts.py
         sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
+        sl_threshold:         seuil SL en unités de σ (défaut 3.0)
 
     Output:
         session_state dict mutable (modifié barre par barre)
@@ -144,6 +146,9 @@ def init_session(step4_result: dict, pair_config: dict,
         # V2.1 — σ_rolling
         "spread_history": [],
         "sigma_rolling_window": sigma_rolling_window,
+
+        # Seuils paramétrables
+        "sl_threshold": sl_threshold,
     }
 
 
@@ -196,15 +201,16 @@ def compute_signal(row, session_state: dict, step4_result: dict,
     # --- Machine à états — PRIORITÉ DES SIGNAUX ---
     signal = None
     position = session_state["position"]
+    sl = session_state["sl_threshold"]
 
     # 1. SESSION_CLOSE — 5ème motif (audit #1)
     if current_time_min >= 15 * 60 + 25 and position is not None:
         return ("SESSION_CLOSE", float(spread), float(z), float(sigma_rolling))
 
     # 2. STOP LOSS
-    if position == "LONG" and z < -3.0:
+    if position == "LONG" and z < -sl:
         signal = "SL"
-    elif position == "SHORT" and z > 3.0:
+    elif position == "SHORT" and z > sl:
         signal = "SL"
 
     # 3. TAKE PROFIT
@@ -212,9 +218,9 @@ def compute_signal(row, session_state: dict, step4_result: dict,
         signal = "TP"
 
     # 4. DÉSARMEMENT sans position en zone SL
-    elif position is None and session_state["is_armed_long"] and z < -3.0:
+    elif position is None and session_state["is_armed_long"] and z < -sl:
         session_state["is_armed_long"] = False
-    elif position is None and session_state["is_armed_short"] and z > 3.0:
+    elif position is None and session_state["is_armed_short"] and z > sl:
         session_state["is_armed_short"] = False
 
     # 5. DÉCLENCHEMENT (seulement si pas en time-lock et pas de position)
@@ -227,11 +233,11 @@ def compute_signal(row, session_state: dict, step4_result: dict,
             session_state["is_armed_short"] = False
 
     # 6. ARMEMENT (indépendant, toujours évalué si pas de position + pas time-lock)
-    #    Pas d'armement en zone SL (z < -3.0 pour long, z > 3.0 pour short)
+    #    Pas d'armement en zone SL
     if position is None and current_time_min < session_state["t_limite"]:
-        if z < -2.0 and z >= -3.0:
+        if z < -2.0 and z >= -sl:
             session_state["is_armed_long"] = True
-        if z > 2.0 and z <= 3.0:
+        if z > 2.0 and z <= sl:
             session_state["is_armed_short"] = True
 
     return (signal, float(spread), float(z), float(sigma_rolling))
@@ -422,7 +428,8 @@ def _compute_session_diagnostics(bar_states: list,
 
 def run_session(df_session: pd.DataFrame, step4_result: dict,
                 pair_config: dict,
-                sigma_rolling_window: int = 20) -> dict:
+                sigma_rolling_window: int = 20,
+                sl_threshold: float = 3.0) -> dict:
     """Exécute les phases 1-5 sur une session complète.
 
     Input:
@@ -431,11 +438,13 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
         step4_result:         dict sortie de run_step4
         pair_config:          PairConfig depuis config/contracts.py
         sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
+        sl_threshold:         seuil SL en unités de σ (défaut 3.0)
 
     Output:
         dict avec bar_states (liste), trades (liste), diagnostics
     """
-    session_state = init_session(step4_result, pair_config, sigma_rolling_window)
+    session_state = init_session(step4_result, pair_config,
+                                 sigma_rolling_window, sl_threshold)
     bar_states = []
 
     for idx, row in df_session.iterrows():
