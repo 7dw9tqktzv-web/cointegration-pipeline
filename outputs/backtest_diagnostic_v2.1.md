@@ -341,3 +341,171 @@ le trading intraday. Il faut un estimateur intermediaire qui :
 2. Soit recalcule a chaque session (pas fixe sur 60 jours)
 3. Produise des Z-scores dans un range raisonnable (+-3 a +-4 max
    en conditions normales)
+
+---
+
+## 9. Distribution Z-score V1 (sigma_eq) — ZC/ZW
+
+Analyse sur 376 sessions tradeable, 55 217 barres.
+
+### Statistiques
+
+```
+mean   = -12.53
+std    = 20.01
+median = -0.79
+min    = -78.97
+max    = +4.31
+P1     = -70.97
+P5     = -57.01
+P99    = +2.94
+```
+
+### Temps passe par zone
+
+| Zone              | Barres  |     %  |
+|-------------------|---------|--------|
+| |z| < 0.5         |   9 849 |  17.8% |
+| 0.5 <= |z| < 1.0  |   9 833 |  17.8% |
+| 1.0 <= |z| < 1.5  |   5 776 |  10.5% |
+| 1.5 <= |z| < 2.0  |   4 434 |   8.0% |
+| 2.0 <= |z| < 2.5  |   1 959 |   3.5% |
+| 2.5 <= |z| < 3.0  |   1 120 |   2.0% |
+| |z| >= 3.0        |  22 246 |  40.3% |
+
+### Seuils de trading
+
+| Seuil    | Barres  |      % | Attendu N(0,1) |
+|----------|---------|--------|----------------|
+| |z| >= 1.0 | 35 535 | 64.4%  | 31.7%          |
+| |z| >= 1.5 | 29 759 | 53.9%  | 13.4%          |
+| |z| >= 2.0 | 25 325 | 45.9%  | 4.6%           |
+| |z| >= 2.5 | 23 366 | 42.3%  | 1.2%           |
+| |z| >= 3.0 | 22 246 | 40.3%  | 0.3%           |
+
+### Diagnostic
+
+Le Z-score V1 n'est PAS distribue comme une N(0,1) :
+- **45% du temps a |z| >= 2.0** au lieu de 4.6% attendu (10x trop)
+- **40% du temps a |z| >= 3.0** au lieu de 0.3% attendu (130x trop)
+- Distribution massivement asymetrique : min = -79, max = +4.3
+- Le spread derive structurellement vers les negatifs (mean = -12.5)
+
+Cause : theta_OU (calibre sur 60 jours) ne suit pas la derive du spread.
+sigma_eq est 10x trop petit par rapport a la vraie dispersion.
+Le modele OU stationnaire ne capture pas la dynamique reelle du spread ZC/ZW.
+
+---
+
+## 10. Analyse MFE/MAE post-entree — trajectoire Z-score
+
+### Donnees
+
+33 trades ZC/ZW + 8 trades GC/PA, trajectoire Z complete de l'entree
+jusqu'a la fin de session. CSV detaille dans outputs/mfe_trajectories.csv
+(3 999 lignes).
+
+### ZC/ZW (33 trades)
+
+```
+MFE (sigma) : median=3.7  mean=5.0  min=0.0  max=20.4
+MAE (sigma) : median=5.1  mean=5.2  min=0.0  max=20.8
+Barres -> MFE : median=54  mean=56
+
+Franchit Z=0   (full reversion) : 25/33 (76%)
+Franchit Z=1.5 (overshoot)      : 21/33 (64%)
+
+Par motif de sortie :
+  STOP_LOSS   : 16 trades | MFE median=2.3 | MAE median=5.4
+  TAKE_PROFIT : 17 trades | MFE median=6.8 | MAE median=2.6
+```
+
+### Decouvertes cles
+
+**Z d'entree median = -0.72, pas -2.0.**
+Le mecanisme arm-then-trigger entre APRES que le spread a deja revert.
+Le spread franchit -2.0 (armement), puis revient au-dessus de -2.0 (trigger).
+A ce moment le Z d'entree reel est median -0.72. Cas extremes : trade #16
+entre LONG a Z = +0.07, trade #21 a Z = -0.09 — le spread est deja revenu
+a la moyenne, plus rien a capturer.
+
+Avec TP a 0.5 sigma, le profit en Z depuis une entree a -0.72 est
+0.72 - 0.5 = 0.22 sigma. C'est insuffisant pour couvrir les couts.
+
+**Le spread mean-reverte reellement.**
+76% des trades franchissent Z=0. 64% vont au-dela de 1.5 de l'autre cote.
+Meme les trades SL passent par un MFE de 2.3 sigma.
+Le modele de cointegration est correct — c'est le timing d'entree
+et la normalisation du Z-score qui sont defaillants.
+
+### Sizing GC/PA — confirmation non-tradeable
+
+Detail du sizing des 8 trades GC/PA :
+- beta_Kalman = 0.04-0.25, notional_B cible = $10k-$25k
+- 1 contrat PA = $100k-$195k, residu de sizing = -$75k a -$100k
+- Leg B est 4-10x trop grosse : trade quasi-directionnel sur PA
+- GC/PA exclu definitivement
+
+---
+
+## 11. Architecture V2.2 proposee
+
+Suite aux invalidations successives (sigma_eq, sigma_rolling, GC/PA,
+decorrelation Z/PnL), une refonte de l'architecture signal est necessaire.
+
+### COUCHE 1 — Eligibilite (hebdomadaire, 60 sessions)
+
+Ce qui existe et fonctionne :
+- Step 2 : I(1) sur chaque actif (ADF + KPSS)
+- Step 3 : cointegration Engle-Granger, beta_OLS, stabilite beta
+- Step 4 : theta_OU, sigma_eq, kappa (diagnostic)
+
+Changement de role :
+- theta_OU ne pilote plus le Z-score. Il sert au biais directionnel :
+  comparer le spread d'ouverture a theta_OU pour determiner si le
+  spread est structurellement haut (SHORT) ou bas (LONG)
+- sigma_eq ne normalise plus le Z-score. Il sert de reference de
+  diagnostic (comparer sigma_rolling a sigma_eq)
+- Recalcul hebdomadaire, pas quotidien
+
+Nouveau filtre go/no-go :
+- HL_empirique_intraday : mesure le temps de mean-reversion intraday
+  par session. Si HL_intraday > 264 barres, la paire ne mean-reverte
+  pas en intraday. Pas de strategie possible.
+
+### COUCHE 2 — Signal intraday (barre par barre)
+
+Z-score auto-coherent :
+```
+mu_rolling_t    = moyenne(Spread sur N dernieres barres de la session)
+sigma_rolling_t = ecart-type(Spread sur N dernieres barres de la session)
+Z_intraday_t    = (Spread_t - mu_rolling_t) / sigma_rolling_t
+```
+
+mu et sigma de la meme fenetre -> Z mecaniquement borne, interpretable.
+Z = +-2.0 est un evenement a ~5%, pas a 45%.
+
+Filtre directionnel (confluence couche 1 -> couche 2) :
+```
+Z_LT = (Spread_ouverture - theta_OU) / sigma_eq
+Si Z_LT > 0 -> ne prendre que des SHORT intraday
+Si Z_LT < 0 -> ne prendre que des LONG intraday
+```
+
+Entree : premier franchissement de Z = +-2.0 dans le sens du biais.
+Sortie : Z retour a 0 (a affiner apres MFE/MAE sur Z propre).
+
+### COMPOSANTS CONSERVES
+
+- Step 1 : donnees Sierra Chart -> barres 5min
+- Step 2 : tests I(1) (ADF + KPSS)
+- Filtre de Kalman : beta dynamique pour le sizing
+- Filtres de risque A/B/C
+- Backtester : PnL, couts, metriques
+
+### ORDRE DES ACTIONS
+
+1. Mesurer HL_empirique_intraday sur les 7 paires (filtre go/no-go)
+2. Implementer Z intraday (mu_rolling + sigma_rolling) + biais directionnel
+3. MFE/MAE avec Z intraday propre (donnees fiables cette fois)
+4. Optimiser seuils d'entree/sortie sur base de donnees propres
