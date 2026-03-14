@@ -228,32 +228,116 @@ Le Z-score et le PnL en dollars sont DECORRELES.
 
 ---
 
-## 6. Bilan V2.1 et prochaine etape
+## 6. Sizing GC/PA — paire non-tradeable
+
+GC/PA n'a pas de micro-contrat pour PA (multiplier 100).
+Le sizing beta-neutral cible notional_B = notional_A * beta_Kalman,
+mais beta = 0.04-0.25, soit notional_B cible = $10k-$25k.
+Or 1 contrat PA = $100k-$195k. Le residu de sizing est de -$75k a -$100k.
+
+La leg B est 4-10x trop grosse par rapport au beta-neutral theorique.
+Le trade est quasi-directionnel sur PA avec un petit hedge GC.
+Les resultats GC/PA sont du bruit directionnel, pas du mean-reversion.
+
+**GC/PA est exclue des analyses suivantes.**
+
+---
+
+## 7. Invalidation de sigma_rolling — Z-scores aberrants
+
+### Comparaison Z_v1 (sigma_eq) vs Z_v2 (sigma_rolling) sur ZC/ZW
+
+Analyse barre par barre sur les sessions avec trades. Exemple session 20240429 :
+
+```
+sigma_eq     = 0.007358 (calibre sur 60 jours)
+sigma_rolling = 0.000400-0.000600 (std sur 20 barres intraday)
+ratio sigma_rolling / sigma_eq = 0.05-0.08
+```
+
+| Barre | Heure | Spread     | Z_v1 (sigma_eq) | Z_v2 (sigma_rolling) |
+|-------|-------|------------|------------------|----------------------|
+| 9     | 19:45 | -0.002026  | -0.23            | -2.82                |
+| 22    | 20:55 | -0.002494  | -0.30            | -4.19                |
+| 39    | 01:00 | -0.002150  | -0.25            | -4.65                |
+| 63    | 04:00 | -0.003212  | -0.39            | -8.26                |
+| 130   | 10:35 | -0.004406  | -0.56            | -7.06                |
+
+Resume session 20240429 :
+- Z_v1 : range [-0.91, -0.01], std = 0.19 — le spread ne sort jamais de
+  la zone neutre en V1
+- Z_v2 : range [-8.26, -0.12] — z-scores de -8, completement aberrants
+
+### Cause racine
+
+sigma_rolling (std sur 20 barres = 100 min) mesure le **bruit de tick local**,
+pas la volatilite du spread. Le spread bouge de 0.001-0.003 en absolu sur la
+session entiere, mais sigma_rolling ne voit que les micro-fluctuations sur
+sa fenetre (0.0003-0.0006).
+
+Resultat : un mouvement parfaitement normal du spread (Z_v1 = -0.3) apparait
+comme une excursion extreme (Z_v2 = -4.0) parce que le denominateur est
+15x trop petit. Les seuils +-2.0 sigma_rolling sont franchis en permanence
+— pas parce que le spread est en territoire extreme, mais parce que
+sigma_rolling est artificiellement bas.
+
+### Test entree directe — confirmation
+
+Test avec entree au premier franchissement de +-2.0 sigma_rolling (sans
+arm-then-trigger) sur ZC/ZW :
+
+| Config                    | Trades | TP  | SL  | SC | avgTP  | avgSL  | Sharpe | WR  |
+|---------------------------|--------|-----|-----|----|--------|--------|--------|-----|
+| Baseline (arm, |z|<0.5)   | 33     | 17  | 16  | 0  | -$32   | -$75   | -2.20  | 52% |
+| A: direct, TP z>=0.0      | 86     | 18  | 68  | 0  | -$13   | -$64   | -2.74  | 21% |
+| B: direct, TP z>=0.5      | 82     | 14  | 68  | 0  | -$3    | -$65   | -2.72  | 17% |
+| C: direct, TP z>=1.0      | 80     | 12  | 68  | 0  | +$11   | -$64   | -2.66  | 15% |
+
+86 trades en entree directe = du bruit de tick interprete comme des signaux
+de mean-reversion. 68 SL sur 86 trades (79%). Le sigma_rolling ne normalise
+pas le spread correctement.
+
+### Verdict
+
+**sigma_rolling est invalide comme denominateur du Z-score pour le trading
+intraday.** Les Z-scores produits sont aberrants (range +-8 a +-20 au lieu
+de +-2) et les signaux generes sont du bruit, pas des excursions de
+mean-reversion.
+
+Le probleme est fondamental : il faut un estimateur de volatilite qui
+capture l'amplitude reelle du spread intraday, pas le bruit local sur
+20 barres.
+
+---
+
+## 8. Bilan V2.1
 
 ### Ce qui fonctionne dans le pipeline
 
 - Steps 2-3-4 : identification correcte des paires cointegrees
 - Filtre de Kalman : beta dynamique, forme de Joseph, NIS stable
 - Signal engine : arme, declenche, ferme mecaniquement
-- sigma_rolling : debloque le Z-score (V2.1)
+- La cointegration est reelle : le spread mean-reverte (76% franchissent Z=0
+  en V1, confirme par analyse MFE/MAE)
 
 ### Ce qui ne fonctionne pas
 
-- La couche qui transforme un signal Z-score en un trade dollar-profitable
-- Le Z-score est un bon detecteur d'excursions du spread, mais il n'a
-  AUCUNE information sur le profit en dollars
-- Le modele est aveugle aux couts et au dollar-move
+- **sigma_rolling (V2.1) est invalide** : le Z-score est aberrant, les signaux
+  sont du bruit de tick. La fenetre glissante de 20 barres mesure les
+  micro-fluctuations, pas la volatilite du spread.
+- **sigma_eq (V1) est trop large** : calibre sur 60 jours multi-session,
+  le Z-score est compresse et n'atteint jamais les seuils intraday.
+- **GC/PA est non-tradeable** : pas de micro PA, residu de sizing $75-100k.
+- **La decorrelation Z-score / PnL dollar** : un TP en Z-score ne garantit
+  pas un profit en dollars (et inversement).
 
-### Prochaine etape : diagnostic "dollar viability"
+### Probleme ouvert
 
-Avant de continuer a optimiser des seuils (Bertram ou autre), il faut
-repondre a la question fondamentale :
-
-**Pour chaque paire, quel est le profit brut en dollars d'un aller-retour
-typique du spread (entree a 2 sigma, sortie a 0.5 sigma) compare au cout RT ?**
-
-- Si ratio < 1 : aucun seuil ne rendra la paire profitable
-- Si ratio > 2 : il y a de la marge pour les couts et les faux signaux
-
-Ce diagnostic "dollar viability" manque dans le pipeline. C'est un pre-filtre
-qui doit etre construit AVANT toute optimisation de seuils.
+Ni sigma_eq (trop large, Z compresse) ni sigma_rolling (trop etroit,
+Z aberrant) ne fournissent une normalisation correcte du spread pour
+le trading intraday. Il faut un estimateur intermediaire qui :
+1. Capture la variabilite reelle du spread sur une session entiere
+   (pas sur 20 barres)
+2. Soit recalcule a chaque session (pas fixe sur 60 jours)
+3. Produise des Z-scores dans un range raisonnable (+-3 a +-4 max
+   en conditions normales)
