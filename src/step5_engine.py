@@ -24,6 +24,40 @@ from src.step5_sizing import compute_sizing
 
 
 # ---------------------------------------------------------------------------
+# σ_rolling — Normalisation Adaptative Intraday (V2.1)
+# ---------------------------------------------------------------------------
+
+def compute_sigma_rolling(spread_history: list[float], window: int,
+                          sigma_eq_fallback: float) -> float:
+    """Calcule l'écart-type glissant du spread sur les N dernières barres.
+
+    Burn-in : si len(spread_history) < window, utilise σ_eq comme fallback.
+    En pratique, le trader n'intervient qu'à barre ~90 (01h00 CT),
+    donc le burn-in est naturellement résolu.
+
+    Input:
+        spread_history:   liste des spreads de la session en cours (barres 0 à t)
+        window:           nombre de barres pour le calcul (paramètre à tester)
+        sigma_eq_fallback: σ_eq de step4, utilisé pendant le burn-in
+
+    Output:
+        σ_rolling (float, toujours > 0)
+    """
+    if len(spread_history) < window:
+        if len(spread_history) < 2:
+            return sigma_eq_fallback
+        # Burn-in partiel : calculer sur ce qu'on a si >= min_bars
+        min_bars = max(10, window // 4)
+        if len(spread_history) >= min_bars:
+            sigma = float(np.std(spread_history, ddof=1))
+            return max(sigma, 1e-10)
+        return sigma_eq_fallback
+
+    sigma = float(np.std(spread_history[-window:], ddof=1))
+    return max(sigma, 1e-10)
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 — Initialisation de Session
 # ---------------------------------------------------------------------------
 
@@ -53,14 +87,16 @@ def _compute_t_limite(hl_operational: float, pair_config: dict) -> int:
     return min(int(t_lim_from_hl), t_close_pit)
 
 
-def init_session(step4_result: dict, pair_config: dict) -> dict:
+def init_session(step4_result: dict, pair_config: dict,
+                 sigma_rolling_window: int = 20) -> dict:
     """Phase 1 — Initialise tous les états de session.
 
     Appelée UNE fois par session (à 17h30 CT).
 
     Input:
-        step4_result: dict sortie de run_step4
-        pair_config:  PairConfig depuis config/contracts.py
+        step4_result:         dict sortie de run_step4
+        pair_config:          PairConfig depuis config/contracts.py
+        sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
 
     Output:
         session_state dict mutable (modifié barre par barre)
@@ -104,6 +140,10 @@ def init_session(step4_result: dict, pair_config: dict) -> dict:
 
         # Trades log
         "trades": [],
+
+        # V2.1 — σ_rolling
+        "spread_history": [],
+        "sigma_rolling_window": sigma_rolling_window,
     }
 
 
@@ -112,10 +152,11 @@ def init_session(step4_result: dict, pair_config: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def compute_signal(row, session_state: dict, step4_result: dict,
-                   current_time_min: int) -> tuple[str | None, float, float]:
-    """Calcule le spread/Z-score et détermine le signal.
+                   current_time_min: int) -> tuple[str | None, float, float, float]:
+    """Calcule le spread, σ_rolling, Z-score et détermine le signal.
 
-    RÈGLE ABSOLUE : σ_eq FIXE toute la session.
+    V2.1 : le Z-score utilise σ_rolling (dynamique intraday) au lieu de σ_eq.
+    σ_eq reste disponible dans step4_result pour diagnostic.
     Le Signal Engine n'accède JAMAIS à β_Kalman.
 
     Input:
@@ -125,7 +166,7 @@ def compute_signal(row, session_state: dict, step4_result: dict,
         current_time_min: minutes depuis minuit CT
 
     Output:
-        (signal, spread, z) — signal string ou None, spread et z-score
+        (signal, spread, z, sigma_rolling)
     """
     alpha_ols = step4_result["alpha_ols"]
     beta_ols = step4_result["beta_ols"]
@@ -134,8 +175,18 @@ def compute_signal(row, session_state: dict, step4_result: dict,
 
     log_a = np.log(row["price_a"])
     log_b = np.log(row["price_b"])
+    # Spread brut OLS — soustraire θ_OU ne changerait pas le std
     spread = log_a - alpha_ols - beta_ols * log_b
-    z = (spread - theta_ou) / sigma_eq
+
+    # V2.1 : accumuler le spread et calculer σ_rolling
+    session_state["spread_history"].append(spread)
+    sigma_rolling = compute_sigma_rolling(
+        session_state["spread_history"],
+        session_state["sigma_rolling_window"],
+        sigma_eq,
+    )
+
+    z = (spread - theta_ou) / sigma_rolling
 
     # Time-Lock : désarmer, pas de nouvelle entrée
     if current_time_min >= session_state["t_limite"]:
@@ -148,7 +199,7 @@ def compute_signal(row, session_state: dict, step4_result: dict,
 
     # 1. SESSION_CLOSE — 5ème motif (audit #1)
     if current_time_min >= 15 * 60 + 25 and position is not None:
-        return ("SESSION_CLOSE", float(spread), float(z))
+        return ("SESSION_CLOSE", float(spread), float(z), float(sigma_rolling))
 
     # 2. STOP LOSS
     if position == "LONG" and z < -3.0:
@@ -183,7 +234,7 @@ def compute_signal(row, session_state: dict, step4_result: dict,
         if z > 2.0 and z <= 3.0:
             session_state["is_armed_short"] = True
 
-    return (signal, float(spread), float(z))
+    return (signal, float(spread), float(z), float(sigma_rolling))
 
 
 # ---------------------------------------------------------------------------
@@ -370,31 +421,28 @@ def _compute_session_diagnostics(bar_states: list,
 # ---------------------------------------------------------------------------
 
 def run_session(df_session: pd.DataFrame, step4_result: dict,
-                pair_config: dict) -> dict:
+                pair_config: dict,
+                sigma_rolling_window: int = 20) -> dict:
     """Exécute les phases 1-5 sur une session complète.
 
     Input:
-        df_session:   DataFrame 5min d'UNE session avec colonnes
-                      price_a, price_b et DatetimeIndex
-        step4_result: dict sortie de run_step4
-        pair_config:  PairConfig depuis config/contracts.py
+        df_session:           DataFrame 5min d'UNE session avec colonnes
+                              price_a, price_b et DatetimeIndex
+        step4_result:         dict sortie de run_step4
+        pair_config:          PairConfig depuis config/contracts.py
+        sigma_rolling_window: fenêtre σ_rolling en barres (V2.1)
 
     Output:
         dict avec bar_states (liste), trades (liste), diagnostics
     """
-    alpha_ols = step4_result["alpha_ols"]
-    beta_ols = step4_result["beta_ols"]
-    theta_ou = step4_result["theta_ou"]
-    sigma_eq = step4_result["sigma_eq"]
-
-    session_state = init_session(step4_result, pair_config)
+    session_state = init_session(step4_result, pair_config, sigma_rolling_window)
     bar_states = []
 
     for idx, row in df_session.iterrows():
         current_time_min = idx.hour * 60 + idx.minute
 
         # Phase 2 + Phase 3 (conceptuellement parallèles)
-        signal, spread_val, z_val = compute_signal(
+        signal, spread_val, z_val, sigma_rolling_val = compute_signal(
             row, session_state, step4_result, current_time_min
         )
         kalman = kalman_update(row, session_state)
@@ -406,6 +454,7 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
             "raw_price_b": float(row["price_b"]),
             "spread": spread_val,
             "z_score": z_val,
+            "sigma_rolling": sigma_rolling_val,
             "signal": signal,
             "beta_kalman": kalman["beta_kalman"],
             "alpha_kalman": kalman["alpha_kalman"],

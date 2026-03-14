@@ -387,7 +387,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  symbol_a: str, symbol_b: str,
                  pair_name: str,
                  verbose: bool = True,
-                 s2_refresh_interval: int = 10) -> dict:
+                 s2_refresh_interval: int = 10,
+                 sigma_rolling_window: int = 20) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -398,6 +399,7 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
         s2_refresh_interval: recalibrer step2 tous les N sessions (défaut 10).
                              I(1) est structurel pour CME — tester à chaque
                              session est du gaspillage (36 ADF+KPSS par appel).
+        sigma_rolling_window: fenêtre σ_rolling en barres (V2.1, défaut 20)
 
     Output:
         dict avec pair, trades, daily_pnl, metrics, session_diagnostics, etc.
@@ -476,7 +478,7 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             continue
 
         # 6. Step 5 — Exécution
-        result = run_session(df_session, s4, pair_config)
+        result = run_session(df_session, s4, pair_config, sigma_rolling_window)
         n_traded += 1
 
         # 7. PnL pour chaque trade

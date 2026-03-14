@@ -17,6 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.step5_engine import (
     _compute_t_limite,
+    compute_sigma_rolling,
     init_session,
     compute_signal,
     kalman_update,
@@ -242,7 +243,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["is_armed_long"] = True
         row = self._make_row(-1.9, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "ENTRY_LONG"
         assert not ss["is_armed_long"]
 
@@ -250,7 +251,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["is_armed_short"] = True
         row = self._make_row(1.9, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "ENTRY_SHORT"
 
     def test_tp(self, step4_synthetic, pair_config_gc_si):
@@ -258,7 +259,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(0.3, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "TP"
 
     def test_sl_long(self, step4_synthetic, pair_config_gc_si):
@@ -266,7 +267,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(-3.1, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "SL"
 
     def test_sl_short(self, step4_synthetic, pair_config_gc_si):
@@ -274,7 +275,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "SHORT"
         row = self._make_row(3.1, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "SL"
 
     def test_sl_priority_over_tp(self, step4_synthetic, pair_config_gc_si):
@@ -282,7 +283,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(-3.5, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal == "SL"
 
     def test_session_close(self, step4_synthetic, pair_config_gc_si):
@@ -290,7 +291,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(1.0, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 925)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 925)
         assert signal == "SESSION_CLOSE"
 
     def test_session_close_priority(self, step4_synthetic, pair_config_gc_si):
@@ -298,7 +299,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(-3.5, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 925)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 925)
         assert signal == "SESSION_CLOSE"
 
     def test_disarm_on_sl_zone(self, step4_synthetic, pair_config_gc_si):
@@ -306,7 +307,7 @@ class TestSignalMachine:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["is_armed_long"] = True
         row = self._make_row(-3.1, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 300)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 300)
         assert signal is None
         assert not ss["is_armed_long"]
 
@@ -328,21 +329,23 @@ class TestSignalMachine:
         assert ss["is_armed_long"] and ss["is_armed_short"]
 
     def test_returns_tuple(self, step4_synthetic, pair_config_gc_si):
-        """compute_signal retourne (signal, spread, z)."""
+        """compute_signal retourne (signal, spread, z, sigma_rolling)."""
         ss = init_session(step4_synthetic, pair_config_gc_si)
         row = self._make_row(0.0, step4_synthetic)
         result = compute_signal(row, ss, step4_synthetic, 300)
-        assert len(result) == 3
-        signal, spread, z = result
+        assert len(result) == 4
+        signal, spread, z, sigma_r = result
         assert isinstance(spread, float)
         assert isinstance(z, float)
+        assert isinstance(sigma_r, float)
+        assert sigma_r > 0
 
     def test_spread_z_consistency(self, step4_synthetic, pair_config_gc_si):
-        """z = (spread - theta_ou) / sigma_eq."""
+        """z = (spread - theta_ou) / sigma_rolling."""
         ss = init_session(step4_synthetic, pair_config_gc_si)
         row = self._make_row(1.5, step4_synthetic)
-        _, spread, z = compute_signal(row, ss, step4_synthetic, 300)
-        expected_z = (spread - step4_synthetic["theta_ou"]) / step4_synthetic["sigma_eq"]
+        _, spread, z, sigma_r = compute_signal(row, ss, step4_synthetic, 300)
+        expected_z = (spread - step4_synthetic["theta_ou"]) / sigma_r
         assert abs(z - expected_z) < 1e-10
 
 
@@ -366,7 +369,7 @@ class TestTimeLockSignal:
         ss = init_session(step4_synthetic, pair_config_gc_si)
         ss["position"] = "LONG"
         row = self._make_row(0.3, step4_synthetic)
-        signal, _, _ = compute_signal(row, ss, step4_synthetic, 900)
+        signal, _, _, _ = compute_signal(row, ss, step4_synthetic, 900)
         assert signal == "TP"
 
     def _make_row(self, z, step4):
