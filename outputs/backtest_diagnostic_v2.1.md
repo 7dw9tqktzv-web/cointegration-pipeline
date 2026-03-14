@@ -66,13 +66,14 @@ Parametres fixes : calibration 60j, MacKinnon 10%, arming 2.0 sigma, TP 0.5 sigm
 
 ### Ce qui fonctionne
 - **sigma_rolling debloque le z-score** : ZC/ZW passe de 0-9 trades (V1) a 33 trades
-- **GC/PA : premier Sharpe positif du projet (+0.32)**, robuste au slippage
 - **0 SESSION_CLOSE** : le spread a assez de volatilite intraday pour toucher TP ou SL
 
-### Ce qui ne fonctionne pas encore
+### Ce qui ne fonctionne pas
 - **ZC/ZW : 33 trades mais Sharpe -2.20** — WR 52% mais ratio W/L = 0.6 (les SL coutent plus que les TP)
+- **GC/PA : Sharpe +0.32 invalide** — repose sur 2 jours sur 3 ans (voir section 5)
 - **3 paires a 0 trades** (GC/SI, NQ/RTY, CL/HO) — le spread intraday reste trop stable meme normalise par sigma_rolling
 - **Blocage principal : cointegration_blocking** (MacKinnon) — 60-70% des sessions skippees
+- **Zero paire viable a ce stade**
 
 ### Seuils Z-score utilises
 - Armement : +/-2.0 sigma_rolling
@@ -87,7 +88,7 @@ Parametres fixes : calibration 60j, MacKinnon 10%, arming 2.0 sigma, TP 0.5 sigm
 |----------------------|---------------|-------------|
 | Paires avec trades   | 1 (ZC/ZW)     | 4           |
 | Total trades (7p)    | 9             | 45          |
-| Sharpe positif       | 0 paires      | 1 (GC/PA)   |
+| Sharpe positif       | 0 paires      | 0 (GC/PA invalide, voir S5) |
 | SESSION_CLOSE rate   | 0%            | 0%          |
 
 ---
@@ -139,10 +140,120 @@ Deux leviers possibles :
 
 ---
 
-## 5. Pistes pour la suite
+## 5. Detail trade-by-trade GC/PA — Invalidation du Sharpe +0.32
 
-- **V2.2 Bertram** : seuils optimaux par paire — a_optimal = f(kappa, sigma, couts).
-  Resout le probleme structurel identifie en section 4 : le TP doit etre
-  calibre pour couvrir les couts, pas fixe a 0.5 sigma pour toutes les paires.
-- **cointegration_blocking** : MacKinnon 10% reste trop restrictif pour
-  GC/SI, NQ/RTY, CL/HO (60-70% des sessions skippees). A revisiter apres V2.2.
+### Les 8 trades
+
+| # | Session  | Dir   | Entree | Sortie | Dur  | Motif        | Z_in  | Z_out | PnL brut | PnL net | Cost |
+|---|----------|-------|--------|--------|------|--------------|-------|-------|----------|---------|------|
+| 1 | 20240110 | LONG  | 02:05  | 03:05  | 12b  | TAKE_PROFIT  | -0.93 | -0.40 | -$440    | -$568   | $128 |
+| 2 | 20240130 | LONG  | 06:05  | 06:55  | 10b  | TAKE_PROFIT  | -1.64 | -0.09 | +$90     | -$38    | $128 |
+| 3 | 20240207 | SHORT | 06:10  | 07:20  | 14b  | STOP_LOSS    | +1.20 | +4.08 | -$380    | -$508   | $128 |
+| 4 | 20240212 | SHORT | 04:05  | 04:30  | 5b   | TAKE_PROFIT  | +1.53 | +0.47 | +$1010   | +$882   | $128 |
+| 5 | 20240212 | SHORT | 07:20  | 07:35  | 3b   | TAKE_PROFIT  | +1.01 | -0.39 | +$703    | +$575   | $128 |
+| 6 | 20240212 | LONG  | 08:25  | 09:25  | 12b  | STOP_LOSS    | -1.98 | -3.81 | +$460    | +$332   | $128 |
+| 7 | 20240704 | LONG  | 01:50  | 03:30  | 20b  | STOP_LOSS    | -1.68 | -5.34 | -$743    | -$872   | $128 |
+| 8 | 20260109 | LONG  | 00:45  | 02:00  | 15b  | STOP_LOSS    | -1.89 | -4.03 | +$1753   | +$1625  | $128 |
+
+### Sigma au moment de l'entree
+
+| # | Session  | sigma_rolling | sigma_eq  | ratio r/eq | GC     | PA     | beta   | HL    |
+|---|----------|---------------|-----------|------------|--------|--------|--------|-------|
+| 1 | 20240110 | 0.000971      | 0.008097  | 0.12       | $2 391 | $1 106 | 0.0440 | 148b  |
+| 2 | 20240130 | 0.000477      | 0.005453  | 0.09       | $2 385 | $1 105 | 0.0632 | 102b  |
+| 3 | 20240207 | 0.000361      | 0.004428  | 0.08       | $2 381 | $1 061 | 0.0919 | 102b  |
+| 4 | 20240212 | 0.001133      | 0.004260  | 0.27       | $2 367 | $992   | 0.1085 | 69b   |
+| 5 | 20240212 | 0.000717      | 0.004260  | 0.17       | $2 370 | $1 014 | 0.1085 | 69b   |
+| 6 | 20240212 | 0.001482      | 0.004260  | 0.35       | $2 361 | $1 012 | 0.1085 | 69b   |
+| 7 | 20240704 | 0.000508      | 0.006352  | 0.08       | $2 653 | $1 124 | 0.1132 | 134b  |
+| 8 | 20260109 | 0.003270      | 0.007697  | 0.42       | $4 522 | $1 954 | 0.2464 | 140b  |
+
+### Contexte marche
+
+| # | Session  | Dir   | GC move      | PA move        | Motif       | PnL net |
+|---|----------|-------|--------------|----------------|-------------|---------|
+| 1 | 20240110 | LONG  | +0.07%       | +0.54%         | TAKE_PROFIT | -$568   |
+| 2 | 20240130 | LONG  | +0.08%       | +0.09%         | TAKE_PROFIT | -$38    |
+| 3 | 20240207 | SHORT | +0.10%       | -0.14%         | STOP_LOSS   | -$508   |
+| 4 | 20240212 | SHORT | +0.02%       | +1.06%         | TAKE_PROFIT | +$882   |
+| 5 | 20240212 | SHORT | -0.03%       | +0.62%         | TAKE_PROFIT | +$575   |
+| 6 | 20240212 | LONG  | +0.00%       | -0.44%         | STOP_LOSS   | +$332   |
+| 7 | 20240704 | LONG  | -0.04%       | +0.56%         | STOP_LOSS   | -$872   |
+| 8 | 20260109 | LONG  | -0.13%       | -1.19%         | STOP_LOSS   | +$1625  |
+
+**Concentration temporelle** : 6 trades sur 8 en jan-fev 2024. Le trade #7
+est le 4 juillet 2024 (ferie US, liquidite reduite). Le trade #8 est en
+janvier 2026 — 18 mois plus tard.
+
+**Heures** : entre 00h45 et 08h25 CT. Session asiatique/europeenne,
+avant l'ouverture US.
+
+**Le 12 fevrier 2024** porte 3 trades (37.5% du PnL) — veille du CPI US.
+PA a bouge de +1% a -0.4% dans la meme session. Seul jour avec assez de
+volatilite pour generer 3 signaux.
+
+### Hypotheses invalidees
+
+**Hypothese 1 : "GC/PA est structurellement different de ZC/ZW."**
+
+INVALIDE. Le Sharpe +0.32 repose sur 2 jours sur 3 ans :
+- 12 fevrier 2024 (veille CPI US) : 3 trades, PnL net = +$1 789
+- 9 janvier 2026 : 1 trade, PnL net = +$1 625
+
+Sans ces 2 jours, les 4 autres trades cumulent -$1 976. Le Sharpe serait
+largement negatif. C'est du bruit sur un petit echantillon amplifie par
+2 jours de volatilite exceptionnelle.
+
+**Hypothese 2 : "Un TP en Z-score = un profit en dollars."**
+
+INVALIDE. C'est le point le plus grave.
+- Trade #1 : touche le TP (Z revient vers 0) mais perd $568
+- Trade #8 : touche le SL (Z diverge a -4.03) mais gagne $1 625
+
+Le Z-score et le PnL en dollars sont DECORRELES.
+
+**Pourquoi cette decorrelation :**
+- Le Z-score vit dans l'espace du spread : log_A - alpha - beta * log_B
+- Le PnL vit dans l'espace dollar : delta_price_A * Q_A * mult_A
+  - delta_price_B * Q_B * mult_B
+- Le passage de l'un a l'autre depend du sizing beta-neutral, des
+  multipliers, et de comment chaque leg bouge individuellement
+- Un TP en Z-score signifie que le spread s'est resserre. Mais si GC monte
+  de 2% et PA monte de 2.5%, le spread se resserre (TP touche) tandis que
+  les deux legs ont bouge massivement — le PnL dollar depend de l'asymetrie
+  des multipliers et du sizing, pas du mouvement du spread
+- PA a un multiplier de 100 et un slippage RT de $100 (le plus eleve du
+  portefeuille). Le cout RT du spread GC/PA est ~$128. Pour qu'un TP soit
+  profitable, le mouvement de spread en dollars doit depasser $128
+
+---
+
+## 6. Bilan V2.1 et prochaine etape
+
+### Ce qui fonctionne dans le pipeline
+
+- Steps 2-3-4 : identification correcte des paires cointegrees
+- Filtre de Kalman : beta dynamique, forme de Joseph, NIS stable
+- Signal engine : arme, declenche, ferme mecaniquement
+- sigma_rolling : debloque le Z-score (V2.1)
+
+### Ce qui ne fonctionne pas
+
+- La couche qui transforme un signal Z-score en un trade dollar-profitable
+- Le Z-score est un bon detecteur d'excursions du spread, mais il n'a
+  AUCUNE information sur le profit en dollars
+- Le modele est aveugle aux couts et au dollar-move
+
+### Prochaine etape : diagnostic "dollar viability"
+
+Avant de continuer a optimiser des seuils (Bertram ou autre), il faut
+repondre a la question fondamentale :
+
+**Pour chaque paire, quel est le profit brut en dollars d'un aller-retour
+typique du spread (entree a 2 sigma, sortie a 0.5 sigma) compare au cout RT ?**
+
+- Si ratio < 1 : aucun seuil ne rendra la paire profitable
+- Si ratio > 2 : il y a de la marge pour les couts et les faux signaux
+
+Ce diagnostic "dollar viability" manque dans le pipeline. C'est un pre-filtre
+qui doit etre construit AVANT toute optimisation de seuils.
