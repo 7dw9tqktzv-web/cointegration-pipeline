@@ -31,7 +31,8 @@ Paires exclues : GC/PA (sizing residuel 45%), CL/HO (sizing residuel 148%).
 - Resultats V1 : `outputs/v1/backtest_diagnostic_v1.md`
 - Resultats V2.1 : `outputs/v2/backtest_diagnostic_v2.1.md`
 - Resultats V2.2 : `outputs/v2/backtest_diagnostic_v2.2.md`
-- Briefings V2 : `docs/v2/briefing_v2_2_z_intraday.md`, `docs/v2/roadmap_v2.md`
+- Briefings V2 : `docs/v2/briefing_v2_2_z_intraday.md`
+- Roadmap future : `docs/roadmap/roadmap_v2.md` (V2.3-V2.7, items V3)
 - Notes de recherche : `docs/recherche/`
 
 Ne jamais improviser une formule ou un parametre. Verifier dans les docs d'abord.
