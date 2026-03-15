@@ -97,13 +97,13 @@ def compute_z_intraday(spread_history: list[float],
 # ---------------------------------------------------------------------------
 
 def _compute_bias(first_row: dict, step4_result: dict,
-                  recent_opens: list[float] | None = None,
+                  recent_opens: list[tuple[float, float]] | None = None,
                   dead_zone: float = 0.0) -> str | None:
     """Biais directionnel — couche 1 vers couche 2.
 
-    Ratio brut : ratio = log(price_A) - log(price_B), sans alpha ni beta.
-    Z_LT = (ratio_today - mu_120) / sigma_120
-    Pas de dependance aux parametres OLS — stable et reproductible.
+    Spread OLS recalcule avec alpha/beta du jour sur les prix bruts stockes.
+    Les 120 derniers spreads sont recalcules avec les OLS de la session
+    courante -> coherent, pas de melange de beta.
 
     Si recent_opens trop court -> None (skip session, burn-in biais)
     Si |Z_LT| < dead_zone -> "BOTH" (trade les deux directions)
@@ -111,8 +111,8 @@ def _compute_bias(first_row: dict, step4_result: dict,
 
     Input:
         first_row:    premiere barre de la session (price_a, price_b)
-        step4_result: non utilise (conserve pour compatibilite signature)
-        recent_opens: liste des ratios log(A/B) des N sessions precedentes
+        step4_result: alpha_ols, beta_ols du jour
+        recent_opens: liste de (price_a, price_b) des N sessions precedentes
         dead_zone:    seuil Z_LT en dessous duquel pas de biais (defaut 0)
 
     Output:
@@ -121,14 +121,23 @@ def _compute_bias(first_row: dict, step4_result: dict,
     if recent_opens is None or len(recent_opens) < 5:
         return None
 
+    alpha = step4_result["alpha_ols"]
+    beta = step4_result["beta_ols"]
+
+    # Recalculer les 120 spreads avec alpha/beta du jour
+    spreads_hist = []
+    for pa, pb in recent_opens:
+        s = np.log(pa) - alpha - beta * np.log(pb)
+        spreads_hist.append(s)
+
     log_a = np.log(first_row["price_a"])
     log_b = np.log(first_row["price_b"])
-    ratio_today = log_a - log_b
+    spread_today = log_a - alpha - beta * log_b
 
-    mu_lt = float(np.mean(recent_opens))
-    sigma_lt = float(np.std(recent_opens, ddof=1))
+    mu_lt = float(np.mean(spreads_hist))
+    sigma_lt = float(np.std(spreads_hist, ddof=1))
     sigma_lt = max(sigma_lt, 1e-10)
-    z_lt = (ratio_today - mu_lt) / sigma_lt
+    z_lt = (spread_today - mu_lt) / sigma_lt
 
     if abs(z_lt) < dead_zone:
         return "BOTH"

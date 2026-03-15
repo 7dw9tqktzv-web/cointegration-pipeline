@@ -431,8 +431,9 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     skip_reasons: dict[str, int] = {}
     n_traded = 0
 
-    # Historique spreads d'ouverture pour biais empirique V2.2
-    spread_opens_history: list[float] = []
+    # Historique prix d'ouverture bruts pour biais empirique V2.2
+    # Stocke (price_a, price_b) — recalcules avec alpha/beta du jour
+    price_opens_history: list[tuple[float, float]] = []
 
     # Cache step2 — I(1) est structurel, pas besoin de recalculer chaque session
     s2_cache: dict = {}
@@ -491,15 +492,14 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             log_skip(target_session, "session_too_short")
             continue
 
-        # 5b. Ratio brut d'ouverture log(A/B) — pas de dependance a alpha/beta
+        # 5b. Stocker les prix bruts d'ouverture pour le biais
         row0 = df_session.iloc[0]
-        ratio_open = float(np.log(row0["price_a"]) - np.log(row0["price_b"]))
-        spread_opens_history.append(ratio_open)
+        price_opens_history.append((float(row0["price_a"]), float(row0["price_b"])))
 
-        # Ratios des N dernieres sessions pour biais empirique
+        # Prix des N dernieres sessions pour biais empirique
         # Ne pas calculer le biais tant qu'on n'a pas bias_window sessions
-        if bias_window > 0 and len(spread_opens_history) > bias_window:
-            recent_opens = spread_opens_history[-bias_window - 1:-1]
+        if bias_window > 0 and len(price_opens_history) > bias_window:
+            recent_opens = price_opens_history[-bias_window - 1:-1]
         else:
             recent_opens = None
 
