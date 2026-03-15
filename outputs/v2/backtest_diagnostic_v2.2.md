@@ -286,31 +286,67 @@ reproductible entre deux implementations differentes du meme calcul.
 - Le biais empirique sur 120 sessions de spread_opens OLS n'est pas
   un signal stable
 
-**Piste pour un biais plus robuste :**
-Le spread d'ouverture ne devrait pas dependre de beta_OLS (qui change).
-Un biais base sur les prix bruts serait plus stable :
-- Ratio log(NQ/RTY) au lieu de spread OLS
-- Ou percentile du prix relatif sur 120 sessions
-- Ou simplement la direction de la tendance du spread sur N sessions
-  (spread monte ou descend sur les 20 derniers jours, sans normalisation)
+### 6.8. Test ratio brut log(A/B) — echec
+
+Remplacement du spread OLS par le ratio brut pour eliminer la dependance
+a beta_OLS. Implementation :
+```
+ratio = log(price_A) - log(price_B)
+mu_120 = mean(ratios des 120 dernieres sessions)
+Z_LT = (ratio_today - mu_120) / std(ratios_120)
+```
+
+Config : DZ=1.0 skip, 120 sessions, TP=2.0, SL=1.5.
+
+| Paire  | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|--------|--------|--------|--------|--------|--------|-----|
+| GC_SI  | 540    | +$430  | -$382  | -0.25  | -0.48  | 48% |
+| NQ_RTY | 511    | +$50   | -$157  | -1.46  | -1.64  | 43% |
+| YM_RTY | 924    | +$33   | -$59   | -1.35  | -2.09  | 46% |
+| CL_NG  | 276    | -$20   | -$146  | -2.05  | -2.42  | 43% |
+| ZC_ZW  | 812    | -$38   | -$71   | -6.97  | -7.60  | 54% |
+
+**Aucun Sharpe positif.** Le signal directionnel qui fonctionnait avec le
+spread OLS ne se transfere pas au ratio brut. Le beta joue un role reel
+dans le signal — le ratio brut perd l'information du hedge ratio.
+
+### 6.9. Bilan biais directionnel
+
+**Valide :**
+- Le concept de biais directionnel est statistiquement significatif (p=0.00)
+- Le mode skip (DZ=1.0) ameliore la selectivite
+- Le spread OLS capture un signal que le ratio brut ne capture pas
+
+**Non resolu :**
+- Le spread OLS depend de beta_OLS qui change a chaque recalibration
+- Les resultats ne sont pas reproductibles entre implementations
+- Le ratio brut (sans beta) ne fonctionne pas
+- Risque d'overfitting : ~15 configurations testees sur NQ/RTY
+
+**Pistes V2.3 :**
+- OLS sur 120 sessions (beta tres stable) en timeframe 15min/30min
+  pour un Z-score long terme stable
+- Figer beta une fois par semaine au lieu de recalibrer par session
+- Walk-forward pour valider la robustesse out-of-sample
 
 ---
 
 ## 7. PROCHAINES ETAPES
 
-1. **Repenser le biais directionnel**
-   Le concept est valide (p=0.00) mais l'implementation est fragile.
-   Tester un biais base sur les prix bruts (ratio log) au lieu du
-   spread OLS qui depend de beta recalibre.
+1. **Passer aux sorties (SL/TP) avant de raffiner le biais**
+   Le biais est un filtre — il ameliore la selectivite mais ne cree
+   pas l'edge. L'edge vient du signal intraday + des sorties.
+   Optimiser SL sur la base des donnees MAE avec le meilleur biais
+   disponible (spread OLS 120s, DZ=1.0, malgre ses limites).
 
-2. **GC/SI est la paire prioritaire**
-   Sharpe +0.62, S1.5x +0.18, 687 trades. C'est le meilleur resultat
-   du run complet. Analyser le profil des trades GC/SI en detail.
+2. **Walk-forward validation**
+   Tous les resultats sont in-sample sur 3 ans. Aucune validation
+   out-of-sample. Avant de declarer un setup profitable, il faut
+   un walk-forward (calibrer sur 2 ans, tester sur 1 an).
 
-3. **Optimisation SL guidee par MAE**
-   Sur GC/SI et NQ/RTY. Le SL a 1.5 sigma_entry est arbitraire.
-   Les donnees MAE dimensionnent le SL optimal.
+3. **V2.3 pour le biais et le volume**
+   Beta stable sur 120 sessions, fenetres decouples, MacKinnon 15%.
+   Resoudre le probleme de reproductibilite du biais.
 
-4. **V2.3 pour le volume**
-   Fenetres decouples, MacKinnon 15%, univers elargi.
-   A envisager apres stabilisation du biais.
+4. **Univers elargi**
+   5 paires est insuffisant. Elargir a 10-15 paires pour diversifier.

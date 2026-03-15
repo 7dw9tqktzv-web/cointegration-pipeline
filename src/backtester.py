@@ -491,14 +491,13 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             log_skip(target_session, "session_too_short")
             continue
 
-        # 5b. Calculer le spread d'ouverture et accumuler l'historique
+        # 5b. Ratio brut d'ouverture log(A/B) — pas de dependance a alpha/beta
         row0 = df_session.iloc[0]
-        spread_open = (np.log(row0["price_a"]) - s4["alpha_ols"]
-                       - s4["beta_ols"] * np.log(row0["price_b"]))
-        spread_opens_history.append(float(spread_open))
+        ratio_open = float(np.log(row0["price_a"]) - np.log(row0["price_b"]))
+        spread_opens_history.append(ratio_open)
 
-        # Spreads d'ouverture des N dernieres sessions pour biais empirique
-        # Ne pas calculer le biais tant qu'on n'a pas bias_window sessions d'historique
+        # Ratios des N dernieres sessions pour biais empirique
+        # Ne pas calculer le biais tant qu'on n'a pas bias_window sessions
         if bias_window > 0 and len(spread_opens_history) > bias_window:
             recent_opens = spread_opens_history[-bias_window - 1:-1]
         else:

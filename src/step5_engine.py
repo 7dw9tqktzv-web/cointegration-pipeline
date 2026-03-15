@@ -101,41 +101,34 @@ def _compute_bias(first_row: dict, step4_result: dict,
                   dead_zone: float = 0.0) -> str | None:
     """Biais directionnel — couche 1 vers couche 2.
 
-    Mode empirique (recent_opens fourni) :
-        mu_LT = mean(spreads ouverture des N dernieres sessions)
-        sigma_LT = std(spreads ouverture, ddof=1)
-        Z_LT = (spread_ouverture_today - mu_LT) / sigma_LT
+    Ratio brut : ratio = log(price_A) - log(price_B), sans alpha ni beta.
+    Z_LT = (ratio_today - mu_120) / sigma_120
+    Pas de dependance aux parametres OLS — stable et reproductible.
 
-    Mode legacy (recent_opens=None) :
-        Z_LT = (spread_ouverture - theta_OU) / sigma_eq
-
-    Si |Z_LT| < dead_zone -> None (pas de biais, trade les deux directions)
+    Si recent_opens trop court -> None (skip session, burn-in biais)
+    Si |Z_LT| < dead_zone -> "BOTH" (trade les deux directions)
     Si Z_LT > 0 -> SHORT | Si Z_LT < 0 -> LONG
 
     Input:
         first_row:    premiere barre de la session (price_a, price_b)
-        step4_result: parametres OU (alpha_ols, beta_ols, theta_ou, sigma_eq)
-        recent_opens: liste des spreads d'ouverture des N sessions precedentes
+        step4_result: non utilise (conserve pour compatibilite signature)
+        recent_opens: liste des ratios log(A/B) des N sessions precedentes
         dead_zone:    seuil Z_LT en dessous duquel pas de biais (defaut 0)
 
     Output:
-        "LONG", "SHORT", ou None (zone morte)
+        "LONG", "SHORT", "BOTH", ou None (skip session)
     """
-    alpha = step4_result["alpha_ols"]
-    beta = step4_result["beta_ols"]
+    if recent_opens is None or len(recent_opens) < 5:
+        return None
 
     log_a = np.log(first_row["price_a"])
     log_b = np.log(first_row["price_b"])
-    spread_open = log_a - alpha - beta * log_b
+    ratio_today = log_a - log_b
 
-    if recent_opens is not None and len(recent_opens) >= 5:
-        mu_lt = float(np.mean(recent_opens))
-        sigma_lt = float(np.std(recent_opens, ddof=1))
-        sigma_lt = max(sigma_lt, 1e-10)
-        z_lt = (spread_open - mu_lt) / sigma_lt
-    else:
-        # Pas assez d'historique pour le biais empirique — skip session
-        return None
+    mu_lt = float(np.mean(recent_opens))
+    sigma_lt = float(np.std(recent_opens, ddof=1))
+    sigma_lt = max(sigma_lt, 1e-10)
+    z_lt = (ratio_today - mu_lt) / sigma_lt
 
     if abs(z_lt) < dead_zone:
         return "BOTH"
