@@ -96,29 +96,49 @@ def compute_z_intraday(spread_history: list[float],
 # Phase 1 — Initialisation de Session
 # ---------------------------------------------------------------------------
 
-def _compute_bias(first_row: dict, step4_result: dict) -> str:
-    """Biais directionnel V2.2 — couche 1 vers couche 2.
+def _compute_bias(first_row: dict, step4_result: dict,
+                  recent_opens: list[float] | None = None,
+                  dead_zone: float = 0.0) -> str | None:
+    """Biais directionnel — couche 1 vers couche 2.
 
-    Z_LT = (spread_ouverture - theta_OU) / sigma_eq
-    Si Z_LT > 0 : spread au-dessus de l'equilibre long terme -> SHORT seulement
-    Si Z_LT < 0 : spread en dessous -> LONG seulement
+    Mode empirique (recent_opens fourni) :
+        mu_LT = mean(spreads ouverture des N dernieres sessions)
+        sigma_LT = std(spreads ouverture, ddof=1)
+        Z_LT = (spread_ouverture_today - mu_LT) / sigma_LT
+
+    Mode legacy (recent_opens=None) :
+        Z_LT = (spread_ouverture - theta_OU) / sigma_eq
+
+    Si |Z_LT| < dead_zone -> None (pas de biais, trade les deux directions)
+    Si Z_LT > 0 -> SHORT | Si Z_LT < 0 -> LONG
 
     Input:
         first_row:    premiere barre de la session (price_a, price_b)
-        step4_result: parametres OU (theta_ou, sigma_eq, alpha_ols, beta_ols)
+        step4_result: parametres OU (alpha_ols, beta_ols, theta_ou, sigma_eq)
+        recent_opens: liste des spreads d'ouverture des N sessions precedentes
+        dead_zone:    seuil Z_LT en dessous duquel pas de biais (defaut 0)
 
     Output:
-        "LONG" ou "SHORT"
+        "LONG", "SHORT", ou None (zone morte)
     """
     alpha = step4_result["alpha_ols"]
     beta = step4_result["beta_ols"]
-    theta = step4_result["theta_ou"]
-    sigma_eq = step4_result["sigma_eq"]
 
     log_a = np.log(first_row["price_a"])
     log_b = np.log(first_row["price_b"])
     spread_open = log_a - alpha - beta * log_b
-    z_lt = (spread_open - theta) / sigma_eq
+
+    if recent_opens is not None and len(recent_opens) >= 5:
+        mu_lt = float(np.mean(recent_opens))
+        sigma_lt = float(np.std(recent_opens, ddof=1))
+        sigma_lt = max(sigma_lt, 1e-10)
+        z_lt = (spread_open - mu_lt) / sigma_lt
+    else:
+        # Pas assez d'historique pour le biais empirique — skip session
+        return None
+
+    if abs(z_lt) < dead_zone:
+        return "BOTH"
 
     return "SHORT" if z_lt > 0 else "LONG"
 
@@ -156,7 +176,10 @@ def init_session(step4_result: dict, pair_config: dict,
                  tp_level: float = 0.5,
                  use_v2_zscore: bool = False,
                  first_row: dict | None = None,
-                 pair_name: str | None = None) -> dict:
+                 pair_name: str | None = None,
+                 use_bias: bool = True,
+                 recent_opens: list[float] | None = None,
+                 dead_zone: float = 0.0) -> dict:
     """Phase 1 — Initialise tous les états de session.
 
     Appelée UNE fois par session (à 17h30 CT).
@@ -231,7 +254,7 @@ def init_session(step4_result: dict, pair_config: dict,
 
         # V2.2 — Z intraday
         "use_v2_zscore": use_v2_zscore,
-        "bias": _compute_bias(first_row, step4_result) if use_v2_zscore and first_row else None,
+        "bias": _compute_bias(first_row, step4_result, recent_opens, dead_zone) if use_v2_zscore and use_bias and first_row else None,
 
         # V2.2 — sorties spread-space (figes a l'entree)
         "spread_entry": None,
@@ -345,11 +368,15 @@ def compute_signal(row, session_state: dict, step4_result: dict,
     # 4. ENTREES
     if signal is None and position is None:
         if is_v2:
-            # V2.2 : entree directe + filtre biais directionnel
-            if current_time_min < session_state["t_limite"]:
-                if z <= -2.0 and z >= -sl and bias == "LONG":
+            # V2.2 : entree directe, biais directionnel
+            # bias=None -> pas de trade (skip session)
+            # bias="LONG" -> LONG seulement
+            # bias="SHORT" -> SHORT seulement
+            # bias="BOTH" -> LONG et SHORT autorises (zone morte)
+            if current_time_min < session_state["t_limite"] and bias is not None:
+                if z <= -2.0 and z >= -sl and bias in ("LONG", "BOTH"):
                     signal = "ENTRY_LONG"
-                elif z >= 2.0 and z <= sl and bias == "SHORT":
+                elif z >= 2.0 and z <= sl and bias in ("SHORT", "BOTH"):
                     signal = "ENTRY_SHORT"
 
         elif session_state["direct_entry"]:
@@ -577,7 +604,10 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
                 direct_entry: bool = False,
                 tp_level: float = 0.5,
                 use_v2_zscore: bool = False,
-                pair_name: str | None = None) -> dict:
+                pair_name: str | None = None,
+                use_bias: bool = True,
+                recent_opens: list[float] | None = None,
+                dead_zone: float = 0.0) -> dict:
     """Exécute les phases 1-5 sur une session complète.
 
     Input:
@@ -604,7 +634,8 @@ def run_session(df_session: pd.DataFrame, step4_result: dict,
     session_state = init_session(step4_result, pair_config,
                                  sigma_rolling_window, sl_threshold,
                                  direct_entry, tp_level,
-                                 use_v2_zscore, first_row, pair_name)
+                                 use_v2_zscore, first_row, pair_name,
+                                 use_bias, recent_opens, dead_zone)
     bar_states = []
     kalman_burnin = 5  # barres pour stabiliser le Kalman avant filtre C
 

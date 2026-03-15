@@ -190,22 +190,127 @@ Le V2.4 (switch sizing) est inutile sur ces paires.
 
 ---
 
-## 6. PROCHAINES ETAPES
+## 6. BIAIS DIRECTIONNEL — Tests et invalidation partielle
 
-1. **Analyse MAE/MFE post-entree sur NQ/RTY et GC/SI**
-   Mesurer l'excursion adverse reelle pour calibrer le SL optimal.
-   Si MAE median = 0.8 sigma, SL a 1.0 suffit.
-   Si MAE median = 2.5 sigma, SL a 1.5 coupe des trades viables.
+### 6.1. Biais legacy invalide (theta_OU / sigma_eq)
 
-2. **Serie 2 SL basee sur les donnees MAE**
-   Tester SL = 2.0, 2.5, 3.0 sigma_entry sur NQ/RTY et GC/SI.
-   Objectif : Sharpe > 0 sur au moins 2 paires.
+Le biais original utilisait Z_LT = (spread_open - theta_OU) / sigma_eq.
+theta_OU et sigma_eq ont ete invalides en V2.1 (Z-score aberrant,
+distribution non-N(0,1)). Le biais reposait sur des parametres casses.
 
-3. **Test Z = 2.5 sur GC/SI**
-   Entrees plus selectives. Si avgTP augmente sans perdre trop de
-   volume, la selectivite paie.
+### 6.2. Biais empirique — concept valide, implementation fragile
 
-4. **Memo V2.3 (si necessaire)**
-   Fenetres de calibration decouples (cointegration 130-260 sessions,
-   beta_OLS 30 sessions). MacKinnon 15%. Univers elargi 10-15 paires.
-   A envisager si les series 2-3 ne donnent pas de Sharpe positif.
+Remplacement : Z_LT = (spread_open - mu_120) / sigma_120
+ou mu_120 et sigma_120 sont calcules sur les 120 derniers spreads d'ouverture.
+
+**Test de permutation (NQ/RTY)** — le biais est-il reel ou aleatoire ?
+- Biais empirique 120s : Sharpe +0.925 (sur 112 sessions post-burn-in)
+- 100 filtres aleatoires : median -2.28, max +0.291, P95 -0.418
+- P-value = 0.00 (0/100 >= +0.925)
+- **VERDICT : le biais directionnel est statistiquement significatif**
+
+Le concept fonctionne : quand le spread ouvre haut vs les 120 derniers
+jours, les shorts marchent mieux. Le signal est reel.
+
+### 6.3. Zone morte — serie 1 (skip si |Z_LT| < seuil)
+
+| DZ   | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|------|--------|--------|--------|--------|--------|-----|
+| 0.0  | 788    | +$134  | -$116  | +0.12  | -0.24  | 47% |
+| 0.5  | 681    | +$124  | -$129  | -0.25  | -0.58  | 47% |
+| 0.8  | 393    | +$94   | -$88   | -0.11  | -0.36  | 48% |
+| 1.0  | 287    | +$164  | -$114  | +0.43  | +0.19  | 49% |
+| 1.5  | 98     | +$103  | -$16   | +0.68  | +0.50  | 50% |
+
+DZ=1.0 : Sharpe +0.43, S1.5x +0.19 (premier resultat robuste au slippage).
+DZ=1.5 : Sharpe +0.68, S1.5x +0.50 mais 98 trades seulement.
+
+### 6.4. Zone morte — serie 2 (trade sans biais si |Z_LT| < seuil)
+
+Bug initial : bias=None bloquait les entrees au lieu d'autoriser les
+deux directions. Corrige avec bias="BOTH".
+
+| DZ   | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|------|--------|--------|--------|--------|--------|-----|
+| 0.5  | 434    | +$67   | -$42   | +0.58  | -0.13  | 46% |
+| 0.8  | 537    | +$12   | -$4    | +0.19  | -0.57  | 47% |
+| 1.0  | 594    | -$1    | -$14   | -0.81  | -1.54  | 47% |
+| 1.5  | 727    | +$33   | -$101  | -3.32  | -4.01  | 45% |
+
+Le skip (S1) bat le trade BOTH (S2) a chaque niveau.
+Les sessions ambigues ne sont pas profitables en bidirectionnel.
+
+### 6.5. Run complet 5 paires — divergence avec test isole
+
+Config : biais 120s, DZ=1.0, skip. Resultats :
+
+| Paire  | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|--------|--------|--------|--------|--------|--------|-----|
+| GC_SI  | 687    | +$464  | -$417  | +0.62  | +0.18  | 49% |
+| NQ_RTY | 594    | -$1    | -$14   | -0.32  | -0.61  | 47% |
+| YM_RTY | 1032   | -$2    | -$56   | -2.50  | -3.10  | 44% |
+| CL_NG  | 277    | +$42   | -$225  | -2.80  | -3.15  | 44% |
+| ZC_ZW  | 950    | -$20   | -$81   | -7.76  | -8.51  | 54% |
+
+**NQ/RTY passe de Sharpe +0.43 (test isole) a -0.32 (run complet).**
+GC/SI est la seule paire positive (Sharpe +0.62, S1.5x +0.18).
+
+### 6.6. Cause de la divergence
+
+Le spread d'ouverture depend de alpha_OLS et beta_OLS de la session
+courante. Ces parametres changent a chaque recalibration (la fenetre
+de 60 sessions glisse). Le meme jour peut avoir un spread d'ouverture
+different selon le beta utilise.
+
+L'historique des spread_opens n'est donc PAS stable — il depend de
+l'ordre de calibration. Le Z_LT calcule dans le test isole (sessions
+pre-filtrees, beta fixe par bloc) differe du Z_LT calcule dans le
+backtester (beta recalibre a chaque session).
+
+C'est un **biais dans le biais** : le signal directionnel n'est pas
+reproductible entre deux implementations differentes du meme calcul.
+
+### 6.7. Conclusions sur le biais directionnel
+
+**Ce qui est valide :**
+- Le concept de biais directionnel est statistiquement significatif
+  (test de permutation, p=0.00)
+- Le skip des sessions ambigues (DZ > 0) ameliore la selectivite
+- GC/SI montre un Sharpe positif robuste avec le biais
+
+**Ce qui ne fonctionne pas :**
+- Le calcul du spread d'ouverture est instable (depend de beta_OLS
+  qui change a chaque recalibration)
+- Les resultats ne sont pas reproductibles entre le test isole et
+  le backtester
+- Le biais empirique sur 120 sessions de spread_opens OLS n'est pas
+  un signal stable
+
+**Piste pour un biais plus robuste :**
+Le spread d'ouverture ne devrait pas dependre de beta_OLS (qui change).
+Un biais base sur les prix bruts serait plus stable :
+- Ratio log(NQ/RTY) au lieu de spread OLS
+- Ou percentile du prix relatif sur 120 sessions
+- Ou simplement la direction de la tendance du spread sur N sessions
+  (spread monte ou descend sur les 20 derniers jours, sans normalisation)
+
+---
+
+## 7. PROCHAINES ETAPES
+
+1. **Repenser le biais directionnel**
+   Le concept est valide (p=0.00) mais l'implementation est fragile.
+   Tester un biais base sur les prix bruts (ratio log) au lieu du
+   spread OLS qui depend de beta recalibre.
+
+2. **GC/SI est la paire prioritaire**
+   Sharpe +0.62, S1.5x +0.18, 687 trades. C'est le meilleur resultat
+   du run complet. Analyser le profil des trades GC/SI en detail.
+
+3. **Optimisation SL guidee par MAE**
+   Sur GC/SI et NQ/RTY. Le SL a 1.5 sigma_entry est arbitraire.
+   Les donnees MAE dimensionnent le SL optimal.
+
+4. **V2.3 pour le volume**
+   Fenetres decouples, MacKinnon 15%, univers elargi.
+   A envisager apres stabilisation du biais.

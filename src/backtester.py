@@ -392,7 +392,10 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  sl_threshold: float = 3.0,
                  direct_entry: bool = False,
                  tp_level: float = 0.5,
-                 use_v2_zscore: bool = False) -> dict:
+                 use_v2_zscore: bool = False,
+                 use_bias: bool = True,
+                 bias_window: int = 20,
+                 dead_zone: float = 0.0) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -427,6 +430,9 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     session_diagnostics: list[dict] = []
     skip_reasons: dict[str, int] = {}
     n_traded = 0
+
+    # Historique spreads d'ouverture pour biais empirique V2.2
+    spread_opens_history: list[float] = []
 
     # Cache step2 — I(1) est structurel, pas besoin de recalculer chaque session
     s2_cache: dict = {}
@@ -485,11 +491,24 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             log_skip(target_session, "session_too_short")
             continue
 
+        # 5b. Calculer le spread d'ouverture et accumuler l'historique
+        row0 = df_session.iloc[0]
+        spread_open = (np.log(row0["price_a"]) - s4["alpha_ols"]
+                       - s4["beta_ols"] * np.log(row0["price_b"]))
+        spread_opens_history.append(float(spread_open))
+
+        # Spreads d'ouverture des N dernieres sessions pour biais empirique
+        # Ne pas calculer le biais tant qu'on n'a pas bias_window sessions d'historique
+        if bias_window > 0 and len(spread_opens_history) > bias_window:
+            recent_opens = spread_opens_history[-bias_window - 1:-1]
+        else:
+            recent_opens = None
+
         # 6. Step 5 — Exécution
         result = run_session(df_session, s4, pair_config,
                              sigma_rolling_window, sl_threshold,
                              direct_entry, tp_level, use_v2_zscore,
-                             pair_name)
+                             pair_name, use_bias, recent_opens, dead_zone)
         n_traded += 1
 
         # 7. PnL pour chaque trade
