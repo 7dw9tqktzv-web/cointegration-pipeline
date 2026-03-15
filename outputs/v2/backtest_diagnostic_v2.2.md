@@ -331,22 +331,80 @@ dans le signal — le ratio brut perd l'information du hedge ratio.
 
 ---
 
-## 7. PROCHAINES ETAPES
+## 7. OPTIMISATION SL — NQ/RTY + GC/SI
 
-1. **Passer aux sorties (SL/TP) avant de raffiner le biais**
-   Le biais est un filtre — il ameliore la selectivite mais ne cree
-   pas l'edge. L'edge vient du signal intraday + des sorties.
-   Optimiser SL sur la base des donnees MAE avec le meilleur biais
-   disponible (spread OLS 120s, DZ=1.0, malgre ses limites).
+### Bug corrige
 
-2. **Walk-forward validation**
-   Tous les resultats sont in-sample sur 3 ans. Aucune validation
-   out-of-sample. Avant de declarer un setup profitable, il faut
-   un walk-forward (calibrer sur 2 ans, tester sur 1 an).
+Le SL en spread-space etait hardcode a 1.5. Le parametre sl_threshold
+controlait aussi la condition d'entree Z-score (z >= -sl), bloquant les
+entrees quand SL < 2.0. Fix : condition d'entree fixee a +-3.0,
+independante du SL spread-space.
 
-3. **V2.3 pour le biais et le volume**
-   Beta stable sur 120 sessions, fenetres decouples, MacKinnon 15%.
-   Resoudre le probleme de reproductibilite du biais.
+### NQ/RTY — SL 1.5 / 2.0 / 2.5 / 3.0
 
-4. **Univers elargi**
-   5 paires est insuffisant. Elargir a 10-15 paires pour diversifier.
+| SL  | Trades | TP  | SL  | SC  | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|-----|--------|-----|-----|-----|--------|--------|--------|--------|-----|
+| 1.5 | 501    | 219 | 271 | 11  | +$47   | -$157  | -1.50  | -1.68  | 44% |
+| 2.0 | 468    | 233 | 222 | 13  | +$39   | -$201  | -1.79  | -1.96  | 50% |
+| 2.5 | 441    | 238 | 190 | 13  | +$28   | -$205  | -1.33  | -1.48  | 54% |
+| 3.0 | 417    | 233 | 168 | 16  | +$32   | -$242  | -1.40  | -1.55  | 56% |
+
+WR monte avec SL plus large (44% -> 56%) mais avgSL se degrade
+(-$157 -> -$242). Le Sharpe reste negatif a tous les niveaux.
+NQ/RTY n'est pas viable avec cette configuration.
+
+### GC/SI — SL 1.5 / 2.0 / 2.5 / 3.0
+
+| SL  | Trades | TP  | SL  | SC  | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|-----|--------|-----|-----|-----|--------|--------|--------|--------|-----|
+| 1.5 | 460    | 218 | 229 | 13  | +$476  | -$364  | -0.15  | -0.35  | 47% |
+| 2.0 | 421    | 218 | 194 | 9   | +$429  | -$446  | +0.04  | -0.18  | 52% |
+| 2.5 | 396    | 216 | 164 | 16  | +$416  | -$533  | -0.09  | -0.27  | 55% |
+| 3.0 | 375    | 214 | 139 | 22  | +$472  | -$610  | +0.09  | -0.09  | 57% |
+
+GC/SI SL=2.0 : Sharpe +0.04. SL=3.0 : Sharpe +0.09.
+Les deux sont quasi break-even mais ne survivent pas au slippage 1.5x.
+L'edge est trop fin pour etre exploitable en live.
+
+---
+
+## 8. BILAN V2.2 FINAL
+
+### Resultats
+
+| Paire  | Meilleur SL | Sharpe | S1.5x  | Verdict          |
+|--------|-------------|--------|--------|------------------|
+| GC_SI  | 3.0         | +0.09  | -0.09  | Break-even       |
+| NQ_RTY | 2.5         | -1.33  | -1.48  | Non-viable       |
+| YM_RTY | -           | -1.58  | -2.27  | Non-viable       |
+| CL_NG  | -           | -1.98  | -2.37  | Non-viable       |
+| ZC_ZW  | -           | -7.44  | -8.10  | Non-viable       |
+
+### Ce qui a ete valide en V2.2
+
+- Z-score intraday auto-coherent (mean=0, std=1.29, borne +-4.2)
+- Entree directe au 1er franchissement Z=+-2.0
+- Sortie en spread-space (references figees a l'entree)
+- Biais directionnel statistiquement significatif (p=0.00)
+- Biais OLS recalcule avec beta du jour (reproductible)
+- DZ=1.0 mode skip (meilleur compromis)
+- Filtre C avec burn-in 5 barres
+- T_limite base sur HL_intraday P75
+
+### Ce qui n'a pas fonctionne
+
+- Aucune paire avec Sharpe positif robuste au slippage
+- NQ/RTY : edge fragile, depend de l'implementation du biais
+- GC/SI : break-even, avgSL trop couteux (-$364 a -$610)
+- Le SL en sigma_entry ne scale pas avec la volatilite reelle
+- 11 hypotheses invalidees au total
+
+### Pistes V2.3
+
+1. **Fenetres decouples** : cointegration sur 120+ sessions (moins de
+   sessions bloquees), beta_OLS sur 30 sessions (plus reactif)
+2. **MacKinnon 15%** : augmenter le nombre de sessions tradeable
+3. **Biais OLS long terme** : regression sur 120 sessions en timeframe
+   15min/30min pour un Z-score LT stable
+4. **Univers elargi** : 10-15 paires au lieu de 5
+5. **Walk-forward** : validation out-of-sample avant toute conclusion

@@ -341,14 +341,14 @@ def compute_signal(row, session_state: dict, step4_result: dict,
 
         if is_v2 and spread_e is not None and sigma_e is not None and sigma_e > 0:
             # V2.2 : sorties en spread-space avec references figees a l'entree
-            # SL a 1.5 * sigma_entry, TP a tp_level * sigma_entry
+            # SL a sl * sigma_entry, TP a tp_lv * sigma_entry
             if position == "LONG":
-                if spread < spread_e - 1.5 * sigma_e:
+                if spread < spread_e - sl * sigma_e:
                     signal = "SL"
                 elif spread > spread_e + tp_lv * sigma_e:
                     signal = "TP"
             else:  # SHORT
-                if spread > spread_e + 1.5 * sigma_e:
+                if spread > spread_e + sl * sigma_e:
                     signal = "SL"
                 elif spread < spread_e - tp_lv * sigma_e:
                     signal = "TP"
@@ -375,10 +375,12 @@ def compute_signal(row, session_state: dict, step4_result: dict,
             # bias="LONG" -> LONG seulement
             # bias="SHORT" -> SHORT seulement
             # bias="BOTH" -> LONG et SHORT autorises (zone morte)
+            # Entree entre +-2.0 et +-3.0 (zone signal, pas zone extreme)
+            # Le SL spread-space est independant de cette condition
             if current_time_min < session_state["t_limite"] and bias is not None:
-                if z <= -2.0 and z >= -sl and bias in ("LONG", "BOTH"):
+                if z <= -2.0 and z >= -3.0 and bias in ("LONG", "BOTH"):
                     signal = "ENTRY_LONG"
-                elif z >= 2.0 and z <= sl and bias in ("SHORT", "BOTH"):
+                elif z >= 2.0 and z <= 3.0 and bias in ("SHORT", "BOTH"):
                     signal = "ENTRY_SHORT"
 
         elif session_state["direct_entry"]:
