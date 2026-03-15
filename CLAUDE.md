@@ -28,11 +28,13 @@ Paires exclues : GC/PA (sizing residuel 45%), CL/HO (sizing residuel 148%).
 ## Documents de Reference
 
 - Specification V1 : `docs/recherche/modele_cointegration_v1_FINAL.docx`
+- Briefing V2.1 : `docs/v2/briefing_v2_1_sigma_rolling.md` (invalide, sigma_rolling casse)
+- Briefing V2.2 : `docs/v2/briefing_v2_2_z_intraday.md` (actif)
 - Resultats V1 : `outputs/v1/backtest_diagnostic_v1.md`
 - Resultats V2.1 : `outputs/v2/backtest_diagnostic_v2.1.md`
 - Resultats V2.2 : `outputs/v2/backtest_diagnostic_v2.2.md`
-- Briefings V2 : `docs/v2/briefing_v2_2_z_intraday.md`
-- Roadmap future : `docs/roadmap/roadmap_v2.md` (V2.3-V2.7, items V3)
+- Roadmap V2.3+ : `docs/roadmap/roadmap_v2.3_plus_complet.md` (a jour, inclut contexte V2.2)
+- Roadmap V2 originale : `docs/roadmap/roadmap_v2.md` (historique, post-V1)
 - Notes de recherche : `docs/recherche/`
 
 Ne jamais improviser une formule ou un parametre. Verifier dans les docs d'abord.
