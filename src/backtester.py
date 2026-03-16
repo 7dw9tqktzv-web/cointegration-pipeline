@@ -396,7 +396,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  use_bias: bool = True,
                  bias_window: int = 20,
                  dead_zone: float = 0.0,
-                 n_sessions_calib: int = 60) -> dict:
+                 n_sessions_calib: int = 60,
+                 n_sessions_coint: int | None = None) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -424,7 +425,10 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     sessions_b = set(df_b["session_id"].unique())
     all_sessions = sorted(sessions_a & sessions_b)
 
-    # On commence après n_sessions_calib sessions de calibration
+    # Fenetre longue pour cointegration (si specifiee), sinon = calib
+    n_coint = n_sessions_coint if n_sessions_coint else n_sessions_calib
+    # On commence apres n_sessions_calib — select_calibration_window
+    # gere le cas ou il n'y a pas assez de sessions pour la fenetre longue
     tradeable_sessions = all_sessions[n_sessions_calib:]
 
     all_trades: list[dict] = []
@@ -446,23 +450,38 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             print(f"  SKIP {session_id}: {reason}")
 
     for i, target_session in enumerate(tradeable_sessions):
-        # 1. Fenêtre calibration
-        calib = select_calibration_window(
-            df_a, df_b, target_session, pair_config, n_sessions=n_sessions_calib
-        )
-        if calib is None:
-            log_skip(target_session, "insufficient_clean_sessions")
-            continue
-        df_a_calib, df_b_calib = calib
+        # 1. Fenetres calibration — V2.3 : decouples
+        #    Fenetre longue (n_coint) : step2 + test cointegration MacKinnon
+        #    Fenetre courte (n_sessions_calib) : OLS (beta, alpha) + step4 OU
+        if n_sessions_coint:
+            # Mode decouple V2.3
+            calib_long = select_calibration_window(
+                df_a, df_b, target_session, pair_config, n_sessions=n_coint
+            )
+            calib_short = select_calibration_window(
+                df_a, df_b, target_session, pair_config, n_sessions=n_sessions_calib
+            )
+            if calib_long is None or calib_short is None:
+                log_skip(target_session, "insufficient_clean_sessions")
+                continue
+            df_a_long, df_b_long = calib_long
+            df_a_short, df_b_short = calib_short
+        else:
+            # Mode unifie V2.2
+            calib = select_calibration_window(
+                df_a, df_b, target_session, pair_config, n_sessions=n_sessions_calib
+            )
+            if calib is None:
+                log_skip(target_session, "insufficient_clean_sessions")
+                continue
+            df_a_long = df_a_short = calib[0]
+            df_b_long = df_b_short = calib[1]
 
-        # 2. Step 2 — Stationnarité (caché, refresh tous les N sessions)
-        # I(1) est structurel pour CME — la fenêtre glisse d'1 session sur 30,
-        # le verdict ne change pas. Recalculer 36 ADF+KPSS à chaque pas
-        # est du gaspillage de calcul, pas de la rigueur.
+        # 2. Step 2 — Stationnarite sur fenetre LONGUE (cache)
         if i - s2_last_refresh >= s2_refresh_interval:
             with redirect_stdout(_devnull):
-                s2_a = run_step2(df_a_calib, symbol_a)
-                s2_b = run_step2(df_b_calib, symbol_b)
+                s2_a = run_step2(df_a_long, symbol_a)
+                s2_b = run_step2(df_b_long, symbol_b)
             s2_cache = {"s2_a": s2_a, "s2_b": s2_b}
             s2_last_refresh = i
         else:
@@ -473,16 +492,25 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
             log_skip(target_session, "stationarity_blocking")
             continue
 
-        # 3. Step 3 — Cointégration (recalibré à chaque session — β change)
+        # 3a. Test cointegration MacKinnon sur fenetre LONGUE
         with redirect_stdout(_devnull):
-            s3 = run_step3(df_a_calib, df_b_calib, symbol_a, symbol_b)
-        if s3["is_blocking"]:
+            s3_coint = run_step3(df_a_long, df_b_long, symbol_a, symbol_b)
+        if s3_coint["is_blocking"]:
             log_skip(target_session, "cointegration_blocking")
             continue
 
-        # 4. Step 4 — Paramètres OU (recalibré à chaque session)
+        # 3b. OLS (beta, alpha) sur fenetre COURTE
         with redirect_stdout(_devnull):
-            s4 = run_step4(s3, df_a_calib, df_b_calib)
+            s3 = run_step3(df_a_short, df_b_short, symbol_a, symbol_b)
+        # En mode decouple, on ne bloque pas sur le test MacKinnon court
+        # (la cointegration est validee sur la fenetre longue)
+        if not n_sessions_coint and s3["is_blocking"]:
+            log_skip(target_session, "cointegration_blocking")
+            continue
+
+        # 4. Step 4 — Parametres OU sur fenetre COURTE
+        with redirect_stdout(_devnull):
+            s4 = run_step4(s3, df_a_short, df_b_short)
         if s4["is_blocking"]:
             log_skip(target_session, "ou_blocking")
             continue

@@ -445,14 +445,97 @@ Chaque paire a sa fenetre optimale :
 Aucun Sharpe positif robuste au slippage. Les leviers parametriques sont
 epuises. La V2.3 doit apporter des changements structurels.
 
-### Pistes V2.3
+---
 
-1. **Fenetres decouples** : cointegration sur 120+ sessions (stabilite)
-   ET beta_OLS sur 30 sessions (reactivite) — les deux en meme temps
-2. **MacKinnon 15%** : augmenter le nombre de sessions tradeable
-   (actuellement 60-70% bloquees)
-3. **Biais directionnel V2** : observer la tendance intra-session pendant
-   le burn-in au lieu de predire la direction avant la session
-4. **Univers elargi** : 10-15 paires au lieu de 5
-5. **Micro-contrats** : tester ZC/ZW en micro (couts $13 vs $61)
-6. **Walk-forward** : validation out-of-sample obligatoire
+## 10. TESTS V2.3 — Changements structurels
+
+### 10.1. Biais longue periode (diagnostic stabilite)
+
+2 fenetres OLS (90, 120) x 3 timeframes (15min, 30min, 1h) sur NQ/RTY.
+
+Resultat : le timeframe ne change rien (Z_LT identique pour 15/30/60min).
+OLS=90 meilleur que 120 (runs 5 vs 3, 15 flips/an vs 18).
+Gap 17h30 CT : correlation 0.89 avec 00h00 CT, 4% de changements de signe.
+Le gap n'est pas un probleme systematique.
+
+### 10.2. Fenetres decouples (coint=120, OLS=30)
+
+| Paire  | V2.2 Sharpe | V2.3 Sharpe | Coint block V2.2 | Coint block V2.3 |
+|--------|------------|------------|-----------------|-----------------|
+| NQ_RTY | -1.68      | -2.11      | 414             | 380             |
+| GC_SI  | -0.50      | -0.40      | 437             | 409             |
+| YM_RTY | -3.09      | -3.30      | 409             | 361             |
+| CL_NG  | -2.65      | -2.21      | 429             | 390             |
+| ZC_ZW  | -9.31      | -8.64      | 300             | 261             |
+
+Le cointegration_blocking baisse de 10-15% mais les Sharpe ne s'ameliorent
+pas significativement. La fenetre longue ne resout pas le probleme —
+l'absence de cointegration sur certaines periodes est reelle, pas un manque
+de puissance statistique.
+
+### 10.3. Calibration 30 vs 60 sessions
+
+Sans biais directionnel, TP=2.0, SL=1.5.
+
+| Paire  | calib=60 N=std | calib=30 N=std | calib=30 N=12 |
+|--------|---------------|---------------|--------------|
+| NQ_RTY | -1.68         | -0.98         | -0.66        |
+| GC_SI  | -0.50         | -1.87         | -1.40        |
+| YM_RTY | -3.09         | -2.87         | -3.04        |
+
+NQ_RTY prefere beta reactif (30 sessions, N=12). GC_SI prefere beta
+stable (60 sessions). Pas de parametre global optimal.
+
+### 10.4. Univers elargi — 16 paires
+
+Config V2.2 unifiee (calib=60, N=24, biais OLS 120s DZ=1.0).
+9 nouvelles paires ajoutees : SI_PA, GC_PL, GC_HG, SI_HG, NQ_YM,
+NQ_ES, ES_RTY, ES_YM, CL_RB.
+
+| Paire  | Trades | Sharpe | S1.5x  | Note                        |
+|--------|--------|--------|--------|-----------------------------|
+| CL_HO  | 11     | +1.11  | +1.05  | avgTP neg, avgSL pos (inversee) |
+| ES_YM  | 3      | +0.74  | +0.73  | 3 trades non-significatif   |
+| NQ_ES  | 2      | +0.59  | +0.59  | 2 trades non-significatif   |
+| CL_RB  | 19     | +0.23  | +0.13  | Z/PnL decorrele (pas micro RB) |
+| NQ_YM  | 4      | +0.15  | +0.05  | 4 trades non-significatif   |
+| GC_SI  | 434    | -0.57  | -0.79  | —                           |
+| NQ_RTY | 501    | -1.50  | -1.68  | —                           |
+| YM_RTY | 979    | -1.58  | -2.27  | —                           |
+| CL_NG  | 333    | -2.07  | -2.57  | —                           |
+| ZC_ZW  | 832    | -7.05  | -7.81  | —                           |
+| Autres | 0-10   | —      | —      | Pas assez de trades         |
+
+Portefeuille combine 16 paires : Sharpe -2.37, PnL total -$149k.
+Les nouvelles paires ne changent pas la donne — trop peu de trades
+(biais DZ=1.0 + cointegration_blocking filtrent trop).
+
+### 10.5. Analyse sizing
+
+Le sizing actuel (1 std leg A + micro leg B) est adequat.
+Residus < 10% sur les paires viables (NQ_RTY 1%, GC_SI 7%, YM_RTY 5%).
+Les micro sur leg A n'apportent pas d'amelioration significative.
+Paires sans micro leg B (PA, HO, RB) : residus > 50%, non-tradeables
+en beta-neutral.
+
+### 10.6. Bilan V2.3
+
+Trois leviers structurels testes :
+1. Fenetres decouples → amelioration marginale
+2. Calibration 30 sessions → ameliore NQ_RTY, degrade GC_SI
+3. Univers elargi → pas assez de trades sur les nouvelles paires
+
+**Conclusion : les changements structurels testes ne resolvent pas
+le probleme fondamental. L'edge intraday est trop fin pour couvrir
+les couts de transaction avec le modele actuel.**
+
+---
+
+## 11. V2.4 — Pistes
+
+1. OLS sur 30 sessions (beta frais)
+2. MLE pour parametres OU (kappa, theta, sigma plus precis)
+3. EM/MLE pour Q/R du Kalman (calibres par paire, plus fixes par classe)
+4. Kalman lent sur barres 30min pour biais directionnel
+5. Sizing adaptatif (R2 > 0.95 -> beta_OLS, sinon beta_Kalman)
+6. MacKinnon 15% (plus de sessions tradees)

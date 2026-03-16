@@ -219,6 +219,46 @@ PAIRS: dict[str, PairConfig] = {
         "leg_a": "ZC", "leg_b": "ZW", "classe": "Grains",
         "rollover_excl": 1, "t_close_pit": "13:20",
     },
+    # --- Nouvelles paires V2.3 ---
+    # Metals
+    "SI_PA": {
+        "leg_a": "SI", "leg_b": "PA", "classe": "Metals",
+        "rollover_excl": 3, "t_close_pit": None,
+    },
+    "GC_PL": {
+        "leg_a": "GC", "leg_b": "PL", "classe": "Metals",
+        "rollover_excl": 3, "t_close_pit": None,
+    },
+    "GC_HG": {
+        "leg_a": "GC", "leg_b": "HG", "classe": "Metals",
+        "rollover_excl": 3, "t_close_pit": None,
+    },
+    "SI_HG": {
+        "leg_a": "SI", "leg_b": "HG", "classe": "Metals",
+        "rollover_excl": 3, "t_close_pit": None,
+    },
+    # Equity Index
+    "NQ_YM": {
+        "leg_a": "NQ", "leg_b": "YM", "classe": "Equity Index",
+        "rollover_excl": 0, "t_close_pit": None,
+    },
+    "NQ_ES": {
+        "leg_a": "NQ", "leg_b": "ES", "classe": "Equity Index",
+        "rollover_excl": 0, "t_close_pit": None,
+    },
+    "ES_RTY": {
+        "leg_a": "ES", "leg_b": "RTY", "classe": "Equity Index",
+        "rollover_excl": 0, "t_close_pit": None,
+    },
+    "ES_YM": {
+        "leg_a": "ES", "leg_b": "YM", "classe": "Equity Index",
+        "rollover_excl": 0, "t_close_pit": None,
+    },
+    # Energy
+    "CL_RB": {
+        "leg_a": "CL", "leg_b": "RB", "classe": "Energy",
+        "rollover_excl": 1, "t_close_pit": None,
+    },
 }
 
 
