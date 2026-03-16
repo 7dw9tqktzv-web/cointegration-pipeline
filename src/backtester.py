@@ -395,7 +395,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
                  use_v2_zscore: bool = False,
                  use_bias: bool = True,
                  bias_window: int = 20,
-                 dead_zone: float = 0.0) -> dict:
+                 dead_zone: float = 0.0,
+                 n_sessions_calib: int = 60) -> dict:
     """Boucle principale de backtest.
 
     Input:
@@ -423,8 +424,8 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     sessions_b = set(df_b["session_id"].unique())
     all_sessions = sorted(sessions_a & sessions_b)
 
-    # On commence à la 31ème session (30 pour calibration + 1 pour trading)
-    tradeable_sessions = all_sessions[60:]
+    # On commence après n_sessions_calib sessions de calibration
+    tradeable_sessions = all_sessions[n_sessions_calib:]
 
     all_trades: list[dict] = []
     session_diagnostics: list[dict] = []
@@ -447,7 +448,7 @@ def run_backtest(df_a: pd.DataFrame, df_b: pd.DataFrame,
     for i, target_session in enumerate(tradeable_sessions):
         # 1. Fenêtre calibration
         calib = select_calibration_window(
-            df_a, df_b, target_session, pair_config, n_sessions=60
+            df_a, df_b, target_session, pair_config, n_sessions=n_sessions_calib
         )
         if calib is None:
             log_skip(target_session, "insufficient_clean_sessions")

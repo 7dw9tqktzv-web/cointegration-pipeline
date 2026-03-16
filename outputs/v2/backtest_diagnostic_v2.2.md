@@ -397,14 +397,62 @@ L'edge est trop fin pour etre exploitable en live.
 - NQ/RTY : edge fragile, depend de l'implementation du biais
 - GC/SI : break-even, avgSL trop couteux (-$364 a -$610)
 - Le SL en sigma_entry ne scale pas avec la volatilite reelle
-- 11 hypotheses invalidees au total
+- 12 hypotheses invalidees au total
+
+---
+
+## 9. TEST CALIBRATION 30 vs 60 SESSIONS
+
+Dernier test V2.2 : impact de la fenetre de calibration OLS sur le signal.
+Sans biais directionnel, TP=2.0, SL=1.5.
+
+### NQ/RTY
+
+| Config           | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|------------------|--------|--------|--------|--------|--------|-----|
+| calib=60, N=24   | 1535   | +$109  | -$156  | -1.68  | -2.13  | 45% |
+| calib=30, N=24   | 1215   | +$143  | -$184  | -0.98  | -1.34  | 47% |
+| calib=30, N=12   | 1173   | +$133  | -$160  | -0.66  | -1.02  | 48% |
+
+NQ/RTY prefere un beta reactif (30 sessions) et un N court (12 barres = 1h).
+Sharpe passe de -1.68 a -0.66. Amelioration significative mais toujours negatif.
+
+### GC/SI
+
+| Config           | Trades | avgTP  | avgSL  | Sharpe | S1.5x  | WR  |
+|------------------|--------|--------|--------|--------|--------|-----|
+| calib=60, N=20   | 1561   | +$294  | -$303  | -0.50  | -0.99  | 47% |
+| calib=30, N=20   | 1332   | +$235  | -$307  | -1.87  | -2.87  | 48% |
+| calib=30, N=12   | 1247   | +$230  | -$277  | -1.40  | -2.51  | 48% |
+
+GC/SI prefere un beta stable (60 sessions). calib=30 degrade le Sharpe.
+Les metaux derivent lentement — un beta reactif ajoute du bruit.
+
+### Diagnostic
+
+Chaque paire a sa fenetre optimale :
+- Equity index (NQ/RTY, YM/RTY) : beta reactif, N court
+- Metaux (GC/SI) : beta stable, N long
+- Fixer un parametre global = compromis sous-optimal
+- Fixer par paire = overfitting
+
+### Bilan V2.2 final
+
+~30 configurations testees en 2 jours. Meilleur Sharpe reproductible :
+- NQ/RTY calib=30 N=12 sans biais : Sharpe -0.66
+- GC/SI calib=60 N=20 avec biais OLS recalcule DZ=1.0 : Sharpe +0.09
+
+Aucun Sharpe positif robuste au slippage. Les leviers parametriques sont
+epuises. La V2.3 doit apporter des changements structurels.
 
 ### Pistes V2.3
 
-1. **Fenetres decouples** : cointegration sur 120+ sessions (moins de
-   sessions bloquees), beta_OLS sur 30 sessions (plus reactif)
+1. **Fenetres decouples** : cointegration sur 120+ sessions (stabilite)
+   ET beta_OLS sur 30 sessions (reactivite) — les deux en meme temps
 2. **MacKinnon 15%** : augmenter le nombre de sessions tradeable
-3. **Biais OLS long terme** : regression sur 120 sessions en timeframe
-   15min/30min pour un Z-score LT stable
+   (actuellement 60-70% bloquees)
+3. **Biais directionnel V2** : observer la tendance intra-session pendant
+   le burn-in au lieu de predire la direction avant la session
 4. **Univers elargi** : 10-15 paires au lieu de 5
-5. **Walk-forward** : validation out-of-sample avant toute conclusion
+5. **Micro-contrats** : tester ZC/ZW en micro (couts $13 vs $61)
+6. **Walk-forward** : validation out-of-sample obligatoire

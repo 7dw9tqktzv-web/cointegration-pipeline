@@ -256,7 +256,7 @@ def init_session(step4_result: dict, pair_config: dict,
 
         # V2.2 — Z intraday
         "use_v2_zscore": use_v2_zscore,
-        "bias": _compute_bias(first_row, step4_result, recent_opens, dead_zone) if use_v2_zscore and use_bias and first_row else None,
+        "bias": _compute_bias(first_row, step4_result, recent_opens, dead_zone) if use_v2_zscore and use_bias and first_row else ("BOTH" if use_v2_zscore else None),
 
         # V2.2 — sorties spread-space (figes a l'entree)
         "spread_entry": None,
